@@ -1,0 +1,27 @@
+Dataset,Value,Count,Ratio(%)
+Drillhole Original,DRILLRC,1260748,51.25
+Drillhole Original,DRILLDD,529046,21.51
+Drillhole Original,DRILLRAB,356437,14.49
+Drillhole Original,DRILLAC,270711,11.01
+Drillhole Original,DRILLUNKN,17661,0.72
+Drillhole Original,DRILLAUG,11369,0.46
+Drillhole Original,DRILLPERC,8989,0.37
+Drillhole Original,DRILLVAC,4794,0.19
+Drillhole Original,DRILLSONIC,18,0.0
+Drillhole DNN,DRILLRC,574903,62.48
+Drillhole DNN,DRILLVAC,133258,14.48
+Drillhole DNN,DRILLDD,92300,10.03
+Drillhole DNN,DRILLAC,82678,8.99
+Drillhole DNN,DRILLRAB,29767,3.24
+Drillhole DNN,DRILLAUG,4030,0.44
+Drillhole DNN,DRILLUNKN,3050,0.33
+Drillhole DNN,DRILLPERC,67,0.01
+Drillhole DNN,DRILLSONIC,40,0.0
+Surface Original,SOIL,652403,66.51
+Surface Original,SHALL,287883,29.35
+Surface Original,ROCKC,36174,3.69
+Surface Original,STREA,4474,0.46
+Surface DNN,SOIL,424688,78.0
+Surface DNN,SHALL,88883,16.32
+Surface DNN,ROCKC,26265,4.82
+Surface DNN,STREA,4628,0.85

@@ -1,0 +1,7 @@
+Dataset,SPURIOUS,Count,Ratio(%)
+Drillhole Original,0,6161172,95.83
+Drillhole Original,1,208820,3.25
+Drillhole Original,2,59152,0.92
+Surface Original,0,993270,99.99
+Surface Original,2,63,0.01
+Surface Original,1,52,0.01

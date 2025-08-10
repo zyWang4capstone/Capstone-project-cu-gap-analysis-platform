@@ -1,106 +1,63 @@
 # EDA Plan — Task 1
 
 ## Objective
-Understand dataset structure and quality, perform both basic and comparative exploratory analyses, and prepare multiple cleaned versions for downstream spatial analysis.
+Understand dataset structure and quality, explore both basic and comparative patterns between Original and DNN-imputed datasets, and evaluate the nature and significance of differences.  
+Prepare the foundation for spatial analysis and model validation.
 
 ## Structure
-Task 1 is organised into three Jupyter Notebooks, each targeting a specific analytical goal and producing defined outputs.
+Task 1 is organised into **three parts**, each targeting a distinct analytical objective.
 
-### Part 1 — Basic Analysis
-
-#### Steps
-1. **Data Loading**
-   - Extract `data/raw/csv_datasets.zip` into `data/interim/`
-   - Load four CSV files into Pandas DataFrames
-   - Verify file encoding and delimiters
-
-2. **Data Inspection**
-   - List all fields and check data types
-   - Count records per file
-   - Identify unique sample IDs and duplicates
-   - Verify coordinate fields (`LATITUDE`/`LONGITUDE` or `DLAT`/`DLONG`)
-   - Check coordinate reference system (CRS) with client
-   - Check numeric fields for NaN, negative values, or extreme values
-
-3. **Descriptive Statistics**
-   - Compute mean, median, min, max, standard deviation for `Cu_ppm`
-   - Count number of missing or zero `Cu_ppm` values
-   - Frequency table of `SAMPLETYPE` and other categorical fields
-
-4. **Basic Visualisation**
-   - Scatter plot of coordinates (Original vs DL, side-by-side)
-   - Histogram and KDE plot of `Cu_ppm`
-   - Depth-binned scatter plot (pseudo-3D by colour coding)
-   - Cu concentration heatmap (optional)
-
-#### Outputs
-- `summary_statistics.csv` in `reports/`
-- Basic charts in `reports/images/part1/`
-- Initial `data_dictionary.md` draft
-
-### Part 2 — Comparative Analysis
+### Part 1 — Dataset Overview & Basic Checks
+Focus on loading, validating, and profiling the datasets to establish a clear understanding of structure, completeness, and basic patterns.
 
 #### Steps
-1. **Data Alignment**
-   - Standardise column names between Original and DL datasets
-   - Merge datasets by aligning spatial fields (coordinate match) if applicable
-   - Ensure units and scales are consistent
+1. **Project & Dataset Setup**
+   - Unzip and load Original & DNN-imputed CSV files for drillhole and surface datasets.  
+   - Verify encoding, delimiters, and column consistency.
 
-2. **Transformation and Distribution Comparison**
-   - Apply `log10` transformation to `Cu_ppm`
-   - Generate Empirical Cumulative Distribution Function (ECDF) plots
-   - Compare Original vs DL ECDF curves
+2. **Basic Validations**
+   - Check data types and record counts.  
+   - Verify unique `SAMPLEID` counts and detect duplicates.  
+   - Confirm coordinate fields (`LATITUDE`/`LONGITUDE` or `DLAT`/`DLONG`) and coordinate system with client.  
+   - Check for NaN, negative, or extreme values in numeric fields.
 
-3. **Statistical Testing**
-   - Kolmogorov–Smirnov (KS) test for distribution difference
-   - Cliff’s delta for effect size
+3. **Key Variables Review**
+   - `SAMPLETYPE`, `COLLARID`, depth range and anomalies (e.g., > 2500 m).  
+   - Geographic extents and coarse spatial density.
 
-4. **Comparative Visualisation**
-   - Side-by-side scatter plots coloured by `Cu_ppm`
-   - Difference maps (if applicable)
-   - Boxplots or violin plots comparing Original vs DL
+4. **Summary Statistics**
+   - Compute descriptive stats for `Cu_ppm`.  
+   - Examine distribution patterns for both Original and DNN datasets.
 
-#### Outputs
-- Comparative analysis plots in `reports/images/part2/`
-- Statistical test results in `reports/part2_statistics.csv`
-- Markdown summary of differences
-
-### Part 3 — Data Cleaning Scenarios
+### Part 2 — Comparative Distribution & Spatial Analysis
+Assess how DNN imputation changes spatial coverage and value distributions compared to Original datasets.
 
 #### Steps
-1. **Define Cleaning Rules**
-   - Handling of `SPURIOUS` field (e.g., remove where SPURIOUS > 0)
-   - Outlier removal based on Cu threshold (to be confirmed with client)
-   - Treatment of missing values (drop or impute)
+1. **Spatial Coverage Comparison**
+   - Plot Original vs DNN valid points for drillhole and surface datasets.  
+   - Summarise changes in record counts and coverage.
 
-2. **Generate Alternative Cleaned Datasets**
-   - Version A: Remove SPURIOUS records only
-   - Version B: Remove SPURIOUS + extreme Cu values
-   - Version C: Remove SPURIOUS + extreme Cu + invalid coordinates
+2. **Value Distribution Comparison**
+   - Compare histograms, log-transformed distributions, and ECDF curves.  
+   - Quantify differences via quantiles, KS test, and Cliff’s delta.
 
-3. **Impact Assessment**
-   - Record count changes for each cleaning strategy
-   - Compare Cu_ppm distributions post-cleaning
-   - Spatial distribution changes before/after cleaning
+3. **Advanced Analysis**
+   - KDE overlays in log scale.  
+   - Statistical difference testing for both datasets.  
+   - Interpret how imputation shifts central tendency, variance, and extremes.
 
-4. **Client Decision Table**
-   - Present cleaning rules and resulting dataset summaries
-   - Include pros/cons for each scenario
+### Part 3 — Record-Level Overlap & Validation Basis
+Investigate where Original and DNN datasets contain identical supporting attributes to enable record-by-record comparison.
 
-#### Outputs
-- Cleaned datasets in `data/processed/` (labelled with version tags)
-- Cleaning rule documentation in `reports/part3_cleaning_rules.md`
-- Client review checklist
+#### Steps
+1. **Overlap Identification**
+   - Match records ignoring `SAMPLEID`, using all other shared attributes except `Cu_ppm`.  
+   - Calculate proportion of DNN records with a matching Original record.
 
-## Client Input Required
-- Rule for handling `SPURIOUS`
-- Cu_ppm outlier threshold (numeric value)
-- Coordinate system confirmation
-- Depth unit confirmation
+2. **Validation Strategy**
+   - Define “True Value” subset (records with overlap) for direct value comparison.  
+   - Define “Regional Estimate” subset (non-overlap) for aggregated or spatial comparison.
 
-## Final Deliverables
-- Processed datasets (`data/processed/`)
-- Charts and visualisations (`reports/images/`)
-- Three EDA Jupyter Notebooks (`notebooks/`)
-- Markdown summaries for each part (`reports/`)
-- Client question log (`docs/client_questions.md`)
+3. **Implication**
+   - Clarify that record-level overlap is limited (≈5% for drillhole, ≈8% for surface),  
+     so most evaluation must rely on spatial or aggregated statistics.

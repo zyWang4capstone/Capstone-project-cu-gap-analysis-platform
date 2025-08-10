@@ -1,0 +1,5 @@
+Dataset,Total Rows,<=0 Count,<=0 %,Min Cu_ppm,Max Cu_ppm
+Drillhole Original,6429144,3962111,61.63,-9989990.0,1300000000.0
+Drillhole DNN,920576,0,0.0,0.002,5635899.0
+Surface Original,993385,12038,1.21,-290514.0,1000000.0
+Surface DNN,545382,0,0.0,0.001,1971284.1999999995

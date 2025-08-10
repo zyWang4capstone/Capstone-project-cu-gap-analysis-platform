@@ -1,0 +1,5 @@
+Dataset,DL Total,DL Unique,Record Match (n),Record Match (%),Unique Match (n),Unique Match (%)
+Surface (RAW),545382,433366,47419,8.69,31114,7.18
+Surface (VALID),544464,432934,45853,8.42,30334,7.01
+Drillhole (RAW),920576,913229,63711,6.92,58499,6.41
+Drillhole (VALID),920093,912754,47705,5.18,45741,5.01

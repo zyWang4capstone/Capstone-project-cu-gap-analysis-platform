@@ -60,4 +60,4 @@ Investigate where Original and DNN datasets contain identical supporting attribu
 
 3. **Implication**
    - Clarify that record-level overlap is limited (≈5% for drillhole, ≈8% for surface),  
-     so most evaluation must rely on spatial or aggregated statistics.
+     so most evaluation must rely on spatial or aggregated statistics

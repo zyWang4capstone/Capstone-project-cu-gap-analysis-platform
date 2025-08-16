@@ -1,5 +1,5 @@
 Dataset,Before,After,KeepRatio(%),DroppedRatio(%)
-Drillhole Original,6429144,6395294,99.47,0.53
+Drillhole Original,6429144,2466130,38.36,61.64
 Drillhole DNN,920576,920225,99.96,0.04
-Surface Original,993385,993356,100.0,0.0
+Surface Original,993385,981318,98.79,1.21
 Surface DNN,545382,544886,99.91,0.09

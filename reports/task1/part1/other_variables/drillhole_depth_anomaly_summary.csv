@@ -1,3 +1,3 @@
 Dataset,TotalRows,AnomalyCount,AnomalyRatio(%)
-Drillhole Original,6395294,3157,0.05
+Drillhole Original,2466130,1785,0.07
 Drillhole DNN,920225,0,0.0

@@ -1,13 +1,13 @@
 Dataset,Value,Count,Ratio(%)
-Drillhole Original,DRILLRC,3179539,49.72
-Drillhole Original,DRILLAC,1045754,16.35
-Drillhole Original,DRILLDD,959877,15.01
-Drillhole Original,DRILLRAB,812084,12.7
-Drillhole Original,DRILLVAC,240119,3.75
-Drillhole Original,DRILLUNKN,123883,1.94
-Drillhole Original,DRILLPERC,17041,0.27
-Drillhole Original,DRILLAUG,16827,0.26
-Drillhole Original,DRILLSONIC,170,0.0
+Drillhole Original,DRILLRC,1262709,51.2
+Drillhole Original,DRILLDD,533298,21.62
+Drillhole Original,DRILLRAB,356558,14.46
+Drillhole Original,DRILLAC,270724,10.98
+Drillhole Original,DRILLUNKN,17665,0.72
+Drillhole Original,DRILLAUG,11369,0.46
+Drillhole Original,DRILLPERC,8995,0.36
+Drillhole Original,DRILLVAC,4794,0.19
+Drillhole Original,DRILLSONIC,18,0.0
 Drillhole DNN,DRILLRC,574973,62.48
 Drillhole DNN,DRILLVAC,133258,14.48
 Drillhole DNN,DRILLDD,92362,10.04
@@ -17,10 +17,10 @@ Drillhole DNN,DRILLAUG,4030,0.44
 Drillhole DNN,DRILLUNKN,3050,0.33
 Drillhole DNN,DRILLPERC,67,0.01
 Drillhole DNN,DRILLSONIC,40,0.0
-Surface Original,SOIL,660376,66.48
-Surface Original,SHALL,290280,29.22
-Surface Original,ROCKC,38213,3.85
-Surface Original,STREA,4487,0.45
+Surface Original,SOIL,652557,66.5
+Surface Original,SHALL,287885,29.34
+Surface Original,ROCKC,36402,3.71
+Surface Original,STREA,4474,0.46
 Surface DNN,SOIL,425072,78.01
 Surface DNN,SHALL,88883,16.31
 Surface DNN,ROCKC,26303,4.83

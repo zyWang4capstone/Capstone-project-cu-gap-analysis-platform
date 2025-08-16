@@ -5,3 +5,4 @@ __pycache__/
 .DS_Store
 .venv/
 notebooks/tmp_csv/
+reports/**/*.csv

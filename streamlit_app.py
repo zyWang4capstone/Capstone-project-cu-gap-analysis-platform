@@ -556,3 +556,105 @@ else:
             file_name="xy_slice.csv",
             mime="text/csv",
         )
+
+# ======== Analytics (below main chart) ========
+st.divider()
+st.subheader("Analytics (linked to current filters)")
+
+# Use filtered base for analytics (shared across modes)
+analytics_df = base.dropna(subset=["DIFF", "DIFF_PCT", "CU_DL", "CU_ORIG"]).copy()
+if analytics_df.empty:
+    st.info("No data under current filters for analytics.")
+else:
+    t1, t2, t3, t4 = st.tabs(["Histogram", "DL vs ORIG / DIFF%", "Depth trend", "Top outliers"])
+
+    # ---------- Tab 1: Histogram ----------
+    with t1:
+        cA, cB = st.columns(2)
+        with cA:
+            h1 = px.histogram(
+                analytics_df, x="DIFF", nbins=60,
+                title="Distribution of DIFF (DL - ORIG)",
+                labels={"DIFF":"DIFF"}
+            )
+            h1.update_layout(bargap=0.02, margin=dict(l=0, r=0, t=40, b=10))
+            st.plotly_chart(h1, use_container_width=True)
+        with cB:
+            h2 = px.histogram(
+                analytics_df, x="DIFF_PCT", nbins=60,
+                title="Distribution of DIFF % ((DL-ORIG)/DL*100)",
+                labels={"DIFF_PCT":"DIFF %"}
+            )
+            h2.update_layout(
+                bargap=0.02, margin=dict(l=0, r=0, t=40, b=10),
+                xaxis=dict(ticksuffix="%")
+            )
+            st.plotly_chart(h2, use_container_width=True)
+
+    # ---------- Tab 2: DL vs ORIG / DIFF% ----------
+    with t2:
+        cA, cB = st.columns(2)
+        with cA:
+            s1 = px.scatter(
+                analytics_df.sample(min(len(analytics_df), 50_000), random_state=42),
+                x="CU_ORIG", y="CU_DL",
+                title="CU_DL vs CU_ORIG",
+                labels={"CU_ORIG":"CU_ORIG", "CU_DL":"CU_DL"},
+                opacity=0.6,
+            )
+            # 1:1 参考线
+            lim = float(max(analytics_df["CU_ORIG"].max(), analytics_df["CU_DL"].max()))
+            s1.add_shape(type="line", x0=0, y0=0, x1=lim, y1=lim, line=dict(dash="dash", width=1))
+            s1.update_layout(margin=dict(l=0, r=0, t=40, b=10))
+            st.plotly_chart(s1, use_container_width=True)
+        with cB:
+            s2 = px.scatter(
+                analytics_df.sample(min(len(analytics_df), 50_000), random_state=42),
+                x="CU_DL", y="DIFF_PCT",
+                title="DIFF % vs CU_DL",
+                labels={"CU_DL":"CU_DL", "DIFF_PCT":"DIFF %"},
+                opacity=0.6
+            )
+            s2.update_layout(
+                margin=dict(l=0, r=0, t=40, b=10),
+                yaxis=dict(ticksuffix="%")
+            )
+            st.plotly_chart(s2, use_container_width=True)
+
+    # ---------- Tab 3: Depth trend (binned) ----------
+    with t3:
+        # bin depth, compute median/mean of |DIFF_PCT|
+        bins = st.slider("Depth bins", min_value=10, max_value=120, value=40, step=10)
+        df_tr = analytics_df.copy()
+        df_tr["_abs_pct"] = df_tr["DIFF_PCT"].abs()
+        df_tr["_bin"] = pd.cut(df_tr["DEPTH"], bins=bins)
+        g = df_tr.groupby("_bin").agg(
+            depth_mid=("DEPTH", "median"),
+            abs_pct_median=("_abs_pct", "median"),
+            abs_pct_mean=("_abs_pct", "mean"),
+            n=("DEPTH", "size")
+        ).reset_index(drop=True)
+
+        l1 = px.line(
+            g, x="depth_mid", y=["abs_pct_median", "abs_pct_mean"],
+            markers=True,
+            labels={"value":"|DIFF %|", "depth_mid":"DEPTH"},
+            title="Depth vs |DIFF %| (binned)"
+        )
+        l1.update_layout(
+            margin=dict(l=0, r=0, t=40, b=10),
+            yaxis=dict(ticksuffix="%")
+        )
+        st.plotly_chart(l1, use_container_width=True)
+        st.caption(f"Bins: {bins}  •  Points: {len(analytics_df):,}")
+
+    # ---------- Tab 4: Top outliers ----------
+    with t4:
+        mode = st.radio("Sort by", ["|DIFF %|", "|DIFF|"], horizontal=True)
+        if mode == "|DIFF %|":
+            top = analytics_df.assign(_abs=lambda d: d["DIFF_PCT"].abs()).nlargest(100, "_abs")
+            cols = ["LONGITUDE","LATITUDE","DEPTH","CU_ORIG","CU_DL","DIFF","DIFF_PCT"]
+        else:
+            top = analytics_df.assign(_abs=lambda d: d["DIFF"].abs()).nlargest(100, "_abs")
+            cols = ["LONGITUDE","LATITUDE","DEPTH","CU_ORIG","CU_DL","DIFF","DIFF_PCT"]
+        st.dataframe(top[cols], use_container_width=True, height=360)

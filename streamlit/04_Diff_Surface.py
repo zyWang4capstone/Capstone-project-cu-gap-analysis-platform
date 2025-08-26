@@ -305,10 +305,15 @@ if view_mode == "Points":
     else:
         view = view.dropna(subset=[value_col]).copy()
         arr = view[value_col].to_numpy()
-        if value_col in ("DIFF","DIFF_PCT"):
-            cs, (vmin, vmax) = diverging_color_and_range(arr, clip_mode=="Absolute"); ticksuf = "%"
+        if value_col == "DIFF_PCT":
+            cs, (vmin, vmax) = diverging_color_and_range(arr, clip_mode=="Absolute")
+            ticksuf = "%"
+        elif value_col == "DIFF":
+            cs, (vmin, vmax) = diverging_color_and_range(arr, clip_mode=="Absolute")
+            ticksuf = ""
         else:
-            cs, (vmin, vmax) = sequential_color_and_range(arr, clip_mode=="Absolute"); ticksuf = ""
+            cs, (vmin, vmax) = sequential_color_and_range(arr, clip_mode=="Absolute")
+            ticksuf = ""
 
         if use_basemap:
             fig = px.scatter_mapbox(
@@ -361,10 +366,15 @@ else:
     Xc, Yc, Z = tiles["Xc"], tiles["Yc"], tiles["Z"]
     vals = Z[np.isfinite(Z)]
 
-    if value_col in ("DIFF","DIFF_PCT"):
-        cs, (vmin, vmax) = diverging_color_and_range(vals, clip_mode=="Absolute"); ticksuf = "%"
+    if value_col == "DIFF_PCT":
+        cs, (vmin, vmax) = diverging_color_and_range(vals, clip_mode=="Absolute")
+        ticksuf = "%"
+    elif value_col == "DIFF":
+        cs, (vmin, vmax) = diverging_color_and_range(vals, clip_mode=="Absolute")
+        ticksuf = ""
     else:
-        cs, (vmin, vmax) = sequential_color_and_range(vals, clip_mode=="Absolute"); ticksuf = ""
+        cs, (vmin, vmax) = sequential_color_and_range(vals, clip_mode=="Absolute")
+        ticksuf = ""
 
     yy, xx = np.meshgrid(Yc, Xc, indexing="ij")
     centers = pd.DataFrame({"LATITUDE": yy.ravel(), "LONGITUDE": xx.ravel(), "VAL": Z.ravel()}).dropna()

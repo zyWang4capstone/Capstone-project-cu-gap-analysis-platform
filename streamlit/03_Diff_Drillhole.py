@@ -340,9 +340,12 @@ if view_mode == "Points":
     else:
         view = view.dropna(subset=[value_col]).copy()
         arr = view[value_col].to_numpy()
-        if value_col in ("DIFF","DIFF_PCT"):
+        if value_col == "DIFF_PCT":
             cs, (vmin, vmax) = diverging_color_and_range(arr, clip_mode=="Absolute")
             ticksuf = "%"
+        elif value_col == "DIFF":
+            cs, (vmin, vmax) = diverging_color_and_range(arr, clip_mode=="Absolute")
+            ticksuf = ""   # absolute diff, no percent
         else:
             cs, (vmin, vmax) = sequential_color_and_range(arr, clip_mode=="Absolute")
             ticksuf = ""
@@ -388,11 +391,15 @@ else:
     dx = float(np.diff(x_edges).mean()); dy = float(np.diff(y_edges).mean()); dz = float(np.diff(z_edges).mean())
 
     if value_col in ("DIFF","DIFF_PCT"):
-        cs, (vmin, vmax) = diverging_color_and_range(V, clip_mode=="Absolute")
-        ticksuf = "%"
-    else:
-        cs, (vmin, vmax) = sequential_color_and_range(V, clip_mode=="Absolute")
-        ticksuf = ""
+        if value_col == "DIFF_PCT":
+            cs, (vmin, vmax) = diverging_color_and_range(V, clip_mode=="Absolute")
+            ticksuf = "%"
+        elif value_col == "DIFF":
+            cs, (vmin, vmax) = diverging_color_and_range(V, clip_mode=="Absolute")
+            ticksuf = ""
+        else:
+            cs, (vmin, vmax) = sequential_color_and_range(V, clip_mode=="Absolute")
+            ticksuf = ""
 
     trace = build_voxel_mesh(
         Xc, Yc, Zc, V,

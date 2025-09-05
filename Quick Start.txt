@@ -1,0 +1,55 @@
+Quick Start
+Overview
+
+This repository currently runs two versions in parallel: the original notebooks + frontend, and a new modular backend + frontend.
+The modular backend lives under /src with four packages: eda, original, task2, and common. The workflow has been verified to run end-to-end from a single ZIP input.
+
+Repository layout (relevant parts)
+
+src/ – backend modules (eda, original, task2, common).
+
+tools/ – three command-line scripts used to produce backend artifacts.
+
+reports/… – outputs (e.g., default points_all.csv under reports/task1/original).
+
+Prerequisites
+
+A Python environment with the required packages activated locally (conda/venv acceptable).
+
+Example
+# Conda
+conda activate geo-cu
+
+# Or venv (PowerShell)
+.\.venv\Scripts\Activate.ps1
+
+End-to-End backend run (before starting the frontend)
+
+Execute the following in PowerShell from the repository root:
+
+Run EDA / ingestion
+
+'python tools\run_eda.py'
+
+
+(Processes the ZIP input and writes the cleaned CSVs; see console summary.)
+
+Build unified points dataset
+
+'python tools\build_points_all_v2.py'
+
+
+If your branch still has build_points_all.py, use that filename instead; both serve the same purpose of generating points_all.*.
+
+Recompute Task-2 artifacts
+
+'python tools\recompute_task2.py'
+
+
+(Runs the Task-2 overlap pipeline and prints produced files.)
+
+Launch the frontend
+
+After the backend completes, start the app with:
+
+'streamlit run start.py'

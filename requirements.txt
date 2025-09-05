@@ -6,3 +6,4 @@ scikit-learn
 jupyter
 pyvista
 streamlit-plotly-events
+pyyaml

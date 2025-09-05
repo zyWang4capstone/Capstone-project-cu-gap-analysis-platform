@@ -1,0 +1,40 @@
+app: { env: local, log_level: INFO }
+
+data:
+  task1_clean_dir: reports/task1/cleaned
+  task2_diff_dir: reports/task2/difference
+  original_points_all: reports/task1/original/points_all.csv  
+  cache_dir: .cache
+  zip_path: data/latest.zip
+
+eda:
+  value_aliases: ["VALUE", "CU_PPM", "CU", "CUPPM"]   
+  value_regex: "cu_?ppm$"                             
+  value_min: 0.0                                     
+  value_max: null                                     
+  file_mapping:                                       
+    "drill.*orig.*\\.csv$": {"kind":"drillhole","side":"orig"}
+    "drill.*(dl|dnn).*\\.csv$": {"kind":"drillhole","side":"dl"}
+    "surface.*orig.*\\.csv$": {"kind":"surface","side":"orig"}
+    "surface.*(dl|dnn).*\\.csv$": {"kind":"surface","side":"dl"}
+
+schema:
+  longitude: LONGITUDE
+  latitude: LATITUDE
+  depth: DEPTH
+  value: VALUE
+  orig_value: CU_ORIG
+  dl_value: CU_DL
+  diff: DIFF
+  diff_pct: DIFF_PCT
+  source: SOURCE
+  aliases:
+    lon: [LONG, LONGITUDE, DLONG, LON]
+    lat: [LAT, LATITUDE, DLAT]
+    from: [FROM, FROMDEPTH, DEPTH_FROM, FROM_M]
+    to:   [TO, TODEPTH, DEPTH_TO, TO_M]
+    value: [VALUE, Cu_ppm, CU_PPM, CU]
+
+grid: { unit_xy: degree, z_step_m: 1.0 }
+diff: { mode: dl_minus_orig, overlap_min_len_m: 0, agg: mean }
+viz_defaults: { point_size: 4, max_points_per_plot: 500000, clip_quantile: 0.999 }

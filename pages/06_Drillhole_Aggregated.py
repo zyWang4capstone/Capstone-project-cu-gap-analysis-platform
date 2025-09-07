@@ -702,8 +702,92 @@ with tab_voxels:
             )
             st.plotly_chart(figv, use_container_width=True)
 
+
 with tab_slice:
     _set_active_tab("2D Slice")
+
+    # Row with Slice orientation and Max points side by side
+    c1, c2 = st.columns([2, 1])
+    with c1:
+        slice_mode = st.radio(
+            "Slice orientation",
+            ["XY (map)", "XZ (cross-section)", "YZ (cross-section)"],
+            index=0,
+            horizontal=True,
+            key="slice_mode_main"
+        )
+    with c2:
+        max_points_2d = st.number_input(
+            "Max points (2D slice)",
+            1_000,
+            100_000,
+            int(st.session_state.get("pts_cap_slice", 100_000)),
+            1_000,
+            key="pts_cap_slice"
+        )
+
+    # Prepare data
+    view2d = base.dropna(subset=["LONGITUDE", "LATITUDE", "DEPTH"]).copy()
+    if view2d.empty:
+        st.info("No rows available for 2D slice.")
+    else:
+        if len(view2d) > max_points_2d:
+            view2d = view2d.sample(max_points_2d, random_state=42)
+
+        # --- XY Map slice ---
+        if slice_mode == "XY (map)":
+            st.subheader(f"XY Map slice (Depth {zr[0]}–{zr[1]} m)")
+            if value_col == "__SOURCE__":
+                fig2d = px.scatter(
+                    view2d, x="LONGITUDE", y="LATITUDE", color="SOURCE",
+                    color_discrete_map=CAT_COLORS, opacity=0.8,
+                    hover_data=["DEPTH"], render_mode="webgl"
+                )
+            else:
+                fig2d = px.scatter(
+                    view2d, x="LONGITUDE", y="LATITUDE", color=value_col,
+                    color_continuous_scale="Viridis", opacity=0.8,
+                    hover_data=["DEPTH", value_col], render_mode="webgl"
+                )
+            st.plotly_chart(fig2d, use_container_width=True)
+
+        # --- XZ Cross-section ---
+        elif slice_mode == "XZ (cross-section)":
+            st.subheader(f"XZ Cross-section (Latitude {yr[0]}–{yr[1]})")
+            if value_col == "__SOURCE__":
+                fig2d = px.scatter(
+                    view2d, x="LONGITUDE", y="DEPTH", color="SOURCE",
+                    color_discrete_map=CAT_COLORS, opacity=0.8,
+                    hover_data=["LATITUDE"], render_mode="webgl"
+                )
+            else:
+                fig2d = px.scatter(
+                    view2d, x="LONGITUDE", y="DEPTH", color=value_col,
+                    color_continuous_scale="Viridis", opacity=0.8,
+                    hover_data=["LATITUDE", value_col], render_mode="webgl"
+                )
+            fig2d.update_yaxes(autorange="reversed", title="Depth (m)")
+            st.plotly_chart(fig2d, use_container_width=True)
+
+        # --- YZ Cross-section ---
+        elif slice_mode == "YZ (cross-section)":
+            st.subheader(f"YZ Cross-section (Longitude {xr[0]}–{xr[1]})")
+            if value_col == "__SOURCE__":
+                fig2d = px.scatter(
+                    view2d, x="LATITUDE", y="DEPTH", color="SOURCE",
+                    color_discrete_map=CAT_COLORS, opacity=0.8,
+                    hover_data=["LONGITUDE"], render_mode="webgl"
+                )
+            else:
+                fig2d = px.scatter(
+                    view2d, x="LATITUDE", y="DEPTH", color=value_col,
+                    color_continuous_scale="Viridis", opacity=0.8,
+                    hover_data=["LONGITUDE", value_col], render_mode="webgl"
+                )
+            fig2d.update_yaxes(autorange="reversed", title="Depth (m)")
+            st.plotly_chart(fig2d, use_container_width=True)
+
+
 
 csv_buf = io.StringIO()
 base.to_csv(csv_buf, index=False)

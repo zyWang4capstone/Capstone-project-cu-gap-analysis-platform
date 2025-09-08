@@ -3,7 +3,7 @@
 #   A) DL-only high-value hotspots (drillhole)
 #   B) Overlap uplift hotspots (DL - ORIG) on drillhole
 #   C) Surface vs Drill discrepancy at a Z slice
-#
+#   D) DL-only clustering (Union Drillhole + Surface, DBSCAN Exploration)
 # Note:
 #   We cluster in degrees for lon/lat (no meter conversion), and meters for depth.
 #   Voxel mode: each occupied voxel is a hotspot (no adjacency merge).
@@ -15,6 +15,7 @@ import io
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+import plotly.express as px
 import streamlit as st
 from cap_common.config import load_cfg
 from cap_task2.io import read_points
@@ -441,10 +442,12 @@ def render_hotspot_metrics(total_vox: int, occ_vox: int, n_hot: int):
     c3.metric("Hotspots (clusters)", f"{n_hot:,}")
 
 # ---------------------------- Tabs ----------------------------
-tabA, tabB, tabC = st.tabs([
+tabA, tabB, tabC, tabD, tabE = st.tabs([
     "DL-only peaks (drillhole)",
     "DL uplift hotspots (overlap)",
     "Surface vs Drill discrepancy",
+     "DL-only Clustering (Exploration)",
+     "Overlay: Surface + Drillhole"
 ])
 
 # ==============================================================
@@ -644,6 +647,273 @@ with tabC:
 
                                 export_table(clusters, "insights_C_surface_vs_drill_clusters.csv")
                                 st.markdown(summarize_clusters_topk(clusters, "|delta| (surface − drill)", top_k=3))
+
+
+# ==============================================================
+# D) DL-only clustering (Union Drillhole + Surface, DBSCAN Exploration)
+# ==============================================================
+with tabD:
+    st.caption("Experimental clustering of DL-only regions "
+               "(drillhole + surface) using DBSCAN. "
+               "These represent potential new exploration targets "
+               "where DL finds anomalies without a counterpart "
+               "in the original dataset.")
+
+    # Reload both DL-only drillhole + surface
+    PATH_DH_DLONLY = Path("reports/task2/difference/drillhole_points_dlonly.csv")
+    PATH_SURF_DLONLY = Path("reports/task2/difference/surface_points_dlonly.csv")
+
+    @st.cache_data
+    def safe_read_csv(p: Path, with_depth=False) -> pd.DataFrame:
+        if not p.exists():
+            return pd.DataFrame()
+        df = pd.read_csv(p)
+        cols = ["LONGITUDE","LATITUDE","CU_ORIG","CU_DL","DIFF","DIFF_PCT","SOURCE"]
+        if with_depth: cols.insert(2,"DEPTH")
+        for c in cols:
+            if c in df.columns and c != "SOURCE":
+                df[c] = pd.to_numeric(df[c], errors="coerce")
+        return df.dropna(subset=["LONGITUDE","LATITUDE"]).copy()
+
+    surf_dlonly = safe_read_csv(PATH_SURF_DLONLY)
+    dh_dlonly   = safe_read_csv(PATH_DH_DLONLY, with_depth=True)
+    df_union    = pd.concat([surf_dlonly, dh_dlonly], ignore_index=True)
+
+    if df_union.empty:
+        st.info("No DL-only data available.")
+    else:
+        # Apply global sidebar filters
+        df = df_union[
+            df_union["LONGITUDE"].between(*xr) &
+            df_union["LATITUDE"].between(*yr)
+        ].copy()
+        if "DEPTH" in df.columns:
+            df = df[df["DEPTH"].between(*zr)]
+
+        if df.empty:
+            st.info("No DL-only data under current filters.")
+        else:
+            # Layout: sliders + radio side by side
+            c1, c2, c3 = st.columns([0.3, 0.3, 0.4])
+            with c1:
+                eps = st.slider("Neighborhood distance (eps, degrees)", 
+                                0.01, 1.0, 0.1, 0.01, key="d_eps")
+            with c2:
+                min_samples = st.slider("Min points per cluster", 
+                                        2, 50, 10, 1, key="d_min_samples")
+            with c3:
+                cluster_space = st.radio("Clustering space",
+                                         ["2D (Lon-Lat)", "3D (Lon-Lat-Depth)"],
+                                         index=0, horizontal=True, key="d_space")
+                st.caption("DBSCAN groups nearby points without needing "
+                           "the number of clusters.")
+
+            # Safety: subsample to avoid browser freeze
+            MAX_POINTS = 20000
+            if len(df) > MAX_POINTS:
+                st.warning(f"Showing random sample of {MAX_POINTS:,} "
+                           f"out of {len(df):,} points.")
+                df = df.sample(MAX_POINTS, random_state=42)
+
+            # Run DBSCAN
+            if cluster_space.startswith("2D"):
+                X = df[["LONGITUDE","LATITUDE"]].to_numpy()
+            else:
+                df = df.dropna(subset=["DEPTH"]).copy()
+                X = df[["LONGITUDE","LATITUDE","DEPTH"]].to_numpy()
+
+            db = DBSCAN(eps=eps, min_samples=min_samples).fit(X)
+            df["CLUSTER_ID"] = db.labels_
+
+            # ----------------- Plot -----------------
+            st.subheader("DL-only Clustering Results (Drillhole + Surface)")
+            if cluster_space.startswith("2D"):
+                fig = px.scatter(
+                    df, x="LONGITUDE", y="LATITUDE",
+                    color="CLUSTER_ID", color_continuous_scale="Turbo",
+                    hover_data=["CU_DL","DEPTH"],
+                    opacity=0.8, height=800
+                )
+                fig.update_layout(xaxis_title="Longitude", yaxis_title="Latitude")
+            else:
+                fig = px.scatter_3d(
+                    df, x="LONGITUDE", y="LATITUDE", z="DEPTH",
+                    color="CLUSTER_ID", color_continuous_scale="Turbo",
+                    hover_data=["CU_DL"],
+                    opacity=0.8, height=800
+                )
+                fig.update_layout(scene=dict(zaxis=dict(autorange="reversed", 
+                                                        title="Depth (m)")))
+
+            st.plotly_chart(fig, use_container_width=True)
+
+            # ----------------- Summary -----------------
+            st.subheader("Cluster Summary")
+            cluster_counts = df["CLUSTER_ID"].value_counts().reset_index()
+            cluster_counts.columns = ["Cluster ID","Points"]
+            cluster_counts["Cluster ID"] = cluster_counts["Cluster ID"].astype(str)
+            st.dataframe(cluster_counts, use_container_width=True, hide_index=True)
+
+            # ----------------- Export -----------------
+            buf = io.StringIO()
+            df.to_csv(buf, index=False)
+            st.download_button(
+                "Download clustered CSV",
+                data=buf.getvalue().encode("utf-8"),
+                file_name="insights_D_dlonly_union_clusters.csv",
+                mime="text/csv",
+                type="primary",
+                key="d_download"
+            )
+
+
+
+# ==============================================================
+# E) Overlay: Surface + Drillhole slices
+# ==============================================================
+with tabE:
+    st.caption("Overlay surface grids with drillhole slices, "
+               "to directly compare spatial coverage (drillhole = cross, surface = circle).")
+
+    # ----------------- Controls in one row (3 columns) -----------------
+    c1, c2, c3 = st.columns([0.3, 0.3, 0.4])
+    with c1:
+        source = st.radio("Source", ["All","Overlap","Orig-only","DL-only"],
+                          index=0, horizontal=True, key="e_source")
+    with c2:
+        slice_mode = st.radio("Drillhole slice orientation",
+                              ["XY (map)","XZ (cross-section)","YZ (cross-section)"],
+                              index=0, key="e_slice")
+    with c3:
+        max_points = st.number_input("Max points to render", 1_000, 300_000,
+                                     80_000, 1_000, key="e_max")
+
+    # ----------------- Helpers -----------------
+    def pick_df(split: str, surf: bool) -> pd.DataFrame:
+        if surf:
+            return {
+                "All": sf_all,
+                "Overlap": sf_overlap,
+                "Orig-only": read_surface_split("origonly"),
+                "DL-only": sf_dlonly,
+            }[split]
+        else:
+            return {
+                "All": dh_all,
+                "Overlap": dh_overlap,
+                "Orig-only": read_drill_split("origonly"),
+                "DL-only": dh_dlonly,
+            }[split]
+
+    symbol_map_all = {
+        "orig_only_surface": "circle",
+        "dl_only_surface":   "circle",
+        "overlap_surface":   "circle",
+        "orig_only_drillhole": "x",
+        "dl_only_drillhole":   "x",
+        "overlap_drillhole":   "x",
+        "surface": "circle",
+        "drillhole": "x",
+    }
+    cmap = "Turbo"
+
+    # ----------------- Build filtered frames -----------------
+    surf_df = pick_df(source, surf=True)
+    dh_df   = pick_df(source, surf=False)
+
+    surf_filt = surf_df[surf_df["LONGITUDE"].between(*xr) & surf_df["LATITUDE"].between(*yr)].copy()
+    dh_filt   = dh_df[
+        dh_df["LONGITUDE"].between(*xr) &
+        dh_df["LATITUDE"].between(*yr) &
+        dh_df["DEPTH"].between(*zr)
+    ].copy()
+
+    if len(surf_filt) > max_points:
+        surf_filt = surf_filt.sample(max_points, random_state=42)
+    if len(dh_filt) > max_points:
+        dh_filt = dh_filt.sample(max_points, random_state=42)
+
+    # ----------------- Rendering logic -----------------
+    def make_overlay(xcol, ycol, xlabel, ylabel, yreverse=False, include_surface=True):
+        if source == "All":
+            sf_o = read_surface_split("origonly").copy()
+            sf_d = sf_dlonly.copy()
+            sf_v = sf_overlap.copy()
+            dh_o = read_drill_split("origonly").copy()
+            dh_d = dh_dlonly.copy()
+            dh_v = dh_overlap.copy()
+
+            def w2d(df): return df[df["LONGITUDE"].between(*xr) & df["LATITUDE"].between(*yr)]
+            def w3d(df): return df[df["LONGITUDE"].between(*xr) & df["LATITUDE"].between(*yr) & df["DEPTH"].between(*zr)]
+
+            sf_o, sf_d, sf_v = w2d(sf_o), w2d(sf_d), w2d(sf_v)
+            dh_o, dh_d, dh_v = w3d(dh_o), w3d(dh_d), w3d(dh_v)
+
+            def cap(df): return df.sample(min(len(df), max_points//3), random_state=42) if len(df) > 0 else df
+            sf_o, sf_d, sf_v = cap(sf_o), cap(sf_d), cap(sf_v)
+            dh_o, dh_d, dh_v = cap(dh_o), cap(dh_d), cap(dh_v)
+
+            if not sf_o.empty: sf_o["LAYER"] = "orig_only_surface"
+            if not sf_d.empty: sf_d["LAYER"] = "dl_only_surface"
+            if not sf_v.empty: sf_v["LAYER"] = "overlap_surface"
+            if not dh_o.empty: dh_o["LAYER"] = "orig_only_drillhole"
+            if not dh_d.empty: dh_d["LAYER"] = "dl_only_drillhole"
+            if not dh_v.empty: dh_v["LAYER"] = "overlap_drillhole"
+
+            if ycol == "DEPTH":
+                df_plot = pd.concat([dh_o, dh_d, dh_v], ignore_index=True)
+            else:
+                df_plot = pd.concat([dh_o, dh_d, dh_v, sf_o, sf_d, sf_v], ignore_index=True)
+
+            if df_plot.empty:
+                st.info("No data available under current filters."); return
+
+            hov = [c for c in ["DEPTH","CU_ORIG","CU_DL","DIFF","DIFF_PCT"] if c in df_plot.columns]
+            fig = px.scatter(
+                df_plot, x=xcol, y=ycol,
+                color="LAYER", symbol="LAYER", symbol_map=symbol_map_all,
+                opacity=0.85, hover_data=hov
+            )
+        else:
+            if not surf_filt.empty: surf_filt["LAYER"] = "surface"
+            if not dh_filt.empty:   dh_filt["LAYER"] = "drillhole"
+            value_col = {"Overlap": "DIFF", "Orig-only": "CU_ORIG", "DL-only": "CU_DL"}[source]
+            hover_dh = [c for c in ["DEPTH","CU_ORIG","CU_DL","DIFF","DIFF_PCT"] if c in dh_filt.columns]
+            hover_sf = [c for c in ["CU_ORIG","CU_DL","DIFF","DIFF_PCT"] if c in surf_filt.columns]
+            fig = px.scatter(
+                dh_filt, x=xcol, y=ycol,
+                color=value_col, color_continuous_scale=cmap,
+                symbol="LAYER", symbol_map=symbol_map_all,
+                opacity=0.9, hover_data=hover_dh
+            )
+            if include_surface and not surf_filt.empty and ycol != "DEPTH":
+                fig2 = px.scatter(
+                    surf_filt, x=xcol, y=ycol,
+                    color=value_col, color_continuous_scale=cmap,
+                    symbol="LAYER", symbol_map=symbol_map_all,
+                    opacity=0.6, hover_data=hover_sf
+                )
+                for tr in fig2.data: fig.add_trace(tr)
+            fig.update_layout(coloraxis_colorbar=dict(title=value_col))
+
+        if yreverse: fig.update_yaxes(autorange="reversed")
+        fig.update_layout(height=800, margin=dict(l=0, r=0, t=50, b=10),
+                          xaxis_title=xlabel, yaxis_title=ylabel)
+        st.plotly_chart(fig, use_container_width=True)
+
+    # ----------------- Slices -----------------
+    if slice_mode == "XY (map)":
+        st.subheader(f"Overlay XY Map slice (Depth {zr[0]}–{zr[1]} m)")
+        make_overlay("LONGITUDE","LATITUDE","Longitude","Latitude",yreverse=False, include_surface=True)
+    elif slice_mode == "XZ (cross-section)":
+        st.subheader(f"Overlay XZ Cross-section (Latitude {yr[0]}–{yr[1]})")
+        make_overlay("LONGITUDE","DEPTH","Longitude","Depth (m)",yreverse=True, include_surface=False)
+    else:
+        st.subheader(f"Overlay YZ Cross-section (Longitude {xr[0]}–{xr[1]})")
+        make_overlay("LATITUDE","DEPTH","Latitude","Depth (m)",yreverse=True, include_surface=False)
+
+
+
 
 
 # ---------------------------- Footer note ----------------------------

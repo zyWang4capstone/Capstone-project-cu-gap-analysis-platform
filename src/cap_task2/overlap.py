@@ -27,6 +27,8 @@ class Params:
     grid_step_deg: float = 1e-4   # ≈ 11m at equator; keep consistent with notebook
     z_step_m: float = 1.0         # step when turning intervals to points
     overlap_min_len_m: float = 0  # minimal overlap length to keep
+    include_nonoverlap_in_only: bool = True  # include same-XY but non-overlapping depth as 'only'
+    only_sampling: Literal["mid","zstep"] = "zstep"  # how to sample 'only' intervals to points
 
 # -----------------------
 # Column helpers
@@ -171,6 +173,43 @@ def _intervals_to_points(df_int: pd.DataFrame, z_step_m: float) -> pd.DataFrame:
             rec["DEPTH"] = z
             recs.append(rec)
     return pd.DataFrame.from_records(recs, columns=list(df_int.columns) + ["DEPTH"])
+
+def _merge_intervals(spans: list[tuple[float,float]]) -> list[tuple[float,float]]:
+    """Merge overlapping [lo,hi] spans; return sorted disjoint spans."""
+    if not spans:
+        return []
+    spans = sorted((float(a), float(b)) for a,b in spans if float(a) < float(b))
+    out: list[list[float]] = []
+    for a,b in spans:
+        if not out or a > out[-1][1]:
+            out.append([a,b])
+        else:
+            out[-1][1] = max(out[-1][1], b)
+    return [(a,b) for a,b in out]
+
+
+def _subtract_spans(intervals: list[tuple[float,float,float]],
+                    overlapped: list[tuple[float,float]]) -> list[tuple[float,float,float]]:
+    """Subtract union(overlapped) from *intervals*.
+    intervals: [(from,to,value)], overlapped: [(from,to)]
+    Return remaining [(from,to,value)] with from < to.
+    """
+    ovl = _merge_intervals(overlapped)
+    res: list[tuple[float,float,float]] = []
+    for a,b,v in intervals:
+        cur = float(a)
+        end = float(b)
+        for lo,hi in ovl:
+            if hi <= cur or lo >= end:
+                continue
+            if lo > cur:
+                res.append((cur, min(lo, end), v))
+            cur = max(cur, hi)
+            if cur >= end:
+                break
+        if cur < end:
+            res.append((cur, end, v))
+    return [(x,y,v) for (x,y,v) in res if y > x]
 
 
 def split_drillhole_overlap_and_only(df_o: pd.DataFrame,

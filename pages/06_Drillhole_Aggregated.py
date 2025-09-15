@@ -135,17 +135,27 @@ def get_surface_df_for_overlay(overlay_src: str) -> pd.DataFrame:
 
 # --- Overlay helper (auto-pick by current radio 'source') ---------------------
 def get_surface_df_by_source(source: str) -> pd.DataFrame:
-    """
-    Return the surface dataframe that matches the current drillhole 'source':
-      - "All"       -> SURF_ALL
-      - "Overlap"   -> SURF_OVERLAP
-      - "Orig-only" -> SURF_ORIGONLY
-      - "DL-only"   -> SURF_DLONLY
-    Ensures LONGITUDE/LATITUDE exist; adds a SOURCE column when missing so
-    categorical coloring in 'All' mode remains consistent with points.
-    """
+    """Return surface df that matches current drillhole 'source' selection."""
+    # --- Fix for "All": build from three split files with consistent SOURCE tags ---
+    if source == "All":
+        parts = []
+        for tag, p in [("orig_only", SURF_ORIGONLY),
+                       ("overlap",   SURF_OVERLAP),
+                       ("dl_only",   SURF_DLONLY)]:
+            df = load_surface(p)
+            if df.empty:
+                continue
+            df = df.copy()
+          
+            df = df.rename(columns={"DLAT": "LATITUDE", "DLONG": "LONGITUDE"})
+            if not {"LONGITUDE","LATITUDE"}.issubset(df.columns):
+                continue
+            df["SOURCE"] = tag 
+            parts.append(df)
+        return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
+
+    
     mapping = {
-        "All":       SURF_ALL,
         "Overlap":   SURF_OVERLAP,
         "Orig-only": SURF_ORIGONLY,
         "DL-only":   SURF_DLONLY,
@@ -153,22 +163,13 @@ def get_surface_df_by_source(source: str) -> pd.DataFrame:
     p = mapping.get(source)
     if p is None:
         return pd.DataFrame()
-
-    df = load_surface(p)
-    if df.empty or not {"LONGITUDE", "LATITUDE"}.issubset(df.columns):
+    df = load_surface(p).rename(columns={"DLAT": "LATITUDE", "DLONG": "LONGITUDE"})
+    if df.empty or not {"LONGITUDE","LATITUDE"}.issubset(df.columns):
         return pd.DataFrame()
-
-    # Ensure SOURCE exists for category coloring
     if "SOURCE" not in df.columns:
         df = df.copy()
-        df["SOURCE"] = {
-            "All": "surface_all",
-            "Overlap": "overlap",
-            "Orig-only": "orig_only",
-            "DL-only": "dl_only",
-        }.get(source, "surface")
-
-    return df.dropna(subset=["LONGITUDE", "LATITUDE"]).copy()
+        df["SOURCE"] = {"Overlap":"overlap","Orig-only":"orig_only","DL-only":"dl_only"}[source]
+    return df.dropna(subset=["LONGITUDE","LATITUDE"]).copy()
 
 # ----------------- Custom palettes -----------------
 HOT_CS = [
@@ -314,22 +315,34 @@ cfg = load_cfg()
 def _read_and_fix(kind: str, split: str) -> pd.DataFrame:
     df = read_points(kind, split, cfg)
 
-    # normalize columns
+    
     df = df.rename(columns=lambda c: str(c).upper())
     if "DLAT" in df.columns:  df = df.rename(columns={"DLAT": "LATITUDE"})
     if "DLONG" in df.columns: df = df.rename(columns={"DLONG": "LONGITUDE"})
 
-    # ensure SOURCE exists and is populated (even if present but empty)
-    need_tag = {
-        "overlap":  "overlap",
-        "origonly": "orig_only",
-        "dlonly":   "dl_only",
-        "all":      "drill_all",
-    }.get(split, "unknown")
-    if "SOURCE" not in df.columns or df["SOURCE"].isna().all() or (df["SOURCE"].astype(str).str.strip() == "").all():
-        df["SOURCE"] = need_tag
+   
+    if "SOURCE" in df.columns:
+        s = df["SOURCE"].astype(str).str.strip().str.lower()
+    else:
+        s = pd.Series("", index=df.index)
 
-    # numeric coercions + DIFF_PCT
+    
+    norm = s.map({
+        "orig": "orig_only", "original": "orig_only", "orig_only": "orig_only", "origonly": "orig_only",
+        "dl": "dl_only", "dl_only": "dl_only", "dlonly": "dl_only",
+        "overlap": "overlap", "common": "overlap",
+        "drill_all": "drill_all", "all": "drill_all", "surface_all":"surface_all",
+    })
+
+    
+    tag_by_split = {"overlap":"overlap", "origonly":"orig_only", "dlonly":"dl_only", "all":"drill_all"}
+    tag = tag_by_split.get(split, "unknown")
+    if split in ("overlap","origonly","dlonly"):
+        df["SOURCE"] = tag
+    else:
+        df["SOURCE"] = norm.fillna(tag)
+
+   
     for c in ["LONGITUDE","LATITUDE","DEPTH","CU_ORIG","CU_DL","DIFF","DIFF_PCT"]:
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce")
@@ -339,6 +352,7 @@ def _read_and_fix(kind: str, split: str) -> pd.DataFrame:
         df["DIFF_PCT"] = 100.0 * df["DIFF"] / denom
 
     return df.dropna(subset=["LONGITUDE","LATITUDE"]).copy()
+
 
 
 df_all      = _read_and_fix("drillhole", "all")
@@ -370,17 +384,35 @@ source = st.sidebar.radio(
 def pick_source_df():
     if source == "All":
         parts = []
-        for tag, d in [("orig_only", df_origonly), ("overlap", df_overlap), ("dl_only", df_dlonly)]:
+        for tag, d in [("orig_only", df_origonly),
+                       ("overlap",   df_overlap),
+                       ("dl_only",   df_dlonly)]:
             if not d.empty:
                 dd = d.copy()
-                if "SOURCE" not in dd.columns or dd["SOURCE"].isna().all() or (dd["SOURCE"].astype(str).str.strip() == "").all():
-                    dd["SOURCE"] = tag
+                dd["SOURCE"] = tag          
                 parts.append(dd)
-        return pd.concat(parts, ignore_index=True) if parts else df_all
+
+        if parts:                            
+            return pd.concat(parts, ignore_index=True)
+
+        
+        if not df_all.empty:
+            dd = df_all.copy()
+            o = dd["CU_ORIG"].notna() if "CU_ORIG" in dd.columns else False
+            d = dd["CU_DL"].notna()   if "CU_DL"   in dd.columns else False
+            dd["SOURCE"] = np.select(
+                [o & d, o & ~d, ~o & d],
+                ["overlap", "orig_only", "dl_only"],
+                default="overlap"   
+            )
+            return dd
+        return df_all 
+
     if source == "Overlap":   return df_overlap
     if source == "Orig-only": return df_origonly
     if source == "DL-only":   return df_dlonly
     return df_all
+
 
 # 2) Value (only when source ≠ All). In "All" we color by SOURCE categories.
 category_mode = (source == "All")
@@ -497,7 +529,17 @@ mask = (
 
 # Step 4: depth filter & DIFF/DIFF% filter only affect drillhole rows
 if "DEPTH" in base_raw.columns:
-    mask &= base_raw["_is_surface"] | base_raw["DEPTH"].between(*zr)
+    
+    dh = base_raw.loc[~base_raw["_is_surface"], "DEPTH"].astype(float)
+    use_abs = (dh.dropna().quantile(0.9) <= 0)  
+    depth_for_filter = dh.abs() if use_abs else dh
+
+   
+    depth_series = base_raw["DEPTH"].astype(float)
+    depth_series.loc[~base_raw["_is_surface"]] = depth_for_filter
+
+    mask &= base_raw["_is_surface"] | depth_series.between(*zr)
+
 if (not category_mode) and value_col in ("DIFF","DIFF_PCT") and min_abs_diff > 0:
     mask &= base_raw["_is_surface"] | (base_raw[value_col].abs() >= min_abs_diff)
 
@@ -563,7 +605,31 @@ with tab_points:
 
     view = base.dropna(subset=["LONGITUDE","LATITUDE","DEPTH"]).copy()
     if len(view) > max_points:
-        view = view.sample(max_points, random_state=42)
+        is_surf = view["_is_surface"].fillna(False)
+        surf = view[is_surf]
+        dh   = view[~is_surf]
+
+        
+        keep_min_dh = min(20000, max_points // 3)
+
+        
+        n_surf, n_dh = len(surf), len(dh)
+        if n_surf + n_dh == 0:
+            view = view.sample(max_points, random_state=42)
+        else:
+            
+            dh_quota   = int(max_points * (n_dh / (n_surf + n_dh)))
+            surf_quota = max_points - dh_quota
+            
+            dh_quota   = max(1, max(keep_min_dh, min(dh_quota, len(dh))))
+            surf_quota = max(1, max_points - dh_quota)
+            surf_quota = min(surf_quota, len(surf))
+
+            dh_keep   = dh.sample(dh_quota, random_state=42) if len(dh)   > dh_quota   else dh
+            surf_keep = surf.sample(surf_quota, random_state=42) if len(surf) > surf_quota else surf
+            view = pd.concat([dh_keep, surf_keep], ignore_index=True)
+
+
 
     if category_mode:
 

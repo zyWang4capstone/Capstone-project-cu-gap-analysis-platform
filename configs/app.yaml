@@ -23,6 +23,7 @@ schema:
   latitude: LATITUDE
   depth: DEPTH
   value: VALUE
+  value_regex: "(?i)ppm"
   orig_value: CU_ORIG
   dl_value: CU_DL
   diff: DIFF

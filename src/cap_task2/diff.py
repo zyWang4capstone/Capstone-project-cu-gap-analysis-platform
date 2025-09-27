@@ -11,8 +11,8 @@ import pandas as pd
 
 
 def compute_diff_cols(df: pd.DataFrame,
-                      col_dl: str = "CU_DL",
-                      col_orig: str = "CU_ORIG") -> pd.DataFrame:
+                      col_dl: str = "VALUE_DL",
+                      col_orig: str = "VALUE_ORIG") -> pd.DataFrame:
     """Add DIFF and DIFF_PCT columns in-place and return df."""
     if col_dl in df and col_orig in df:
         dl = pd.to_numeric(df[col_dl], errors="coerce")
@@ -23,7 +23,6 @@ def compute_diff_cols(df: pd.DataFrame,
         df["DIFF"] = diff
         df["DIFF_PCT"] = pct
     else:
-        # keep columns absent for origonly/dlonly tables
         if "DIFF" not in df.columns:
             df["DIFF"] = np.nan
         if "DIFF_PCT" not in df.columns:

@@ -82,7 +82,7 @@ def load_surface(p: Path) -> pd.DataFrame:
     if not p.exists():
         return pd.DataFrame()
     df = pd.read_csv(p)
-    for c in ["LONGITUDE","LATITUDE","CU_ORIG","CU_DL","DIFF","DIFF_PCT"]:
+    for c in ["LONGITUDE", "LATITUDE", "VALUE_ORIG", "VALUE_DL", "DIFF", "DIFF_PCT"]:
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce")
     return df
@@ -94,7 +94,7 @@ def get_surface_df_for_overlay(overlay_src: str) -> pd.DataFrame:
     overlay_src ∈ {"Original", "DL"}.
     We compose it from *_origonly + overlap (for Original) or *_dlonly + overlap (for DL).
     The returned df must at least contain LONGITUDE, LATITUDE, and SOURCE.
-    Numeric columns (CU_ORIG, CU_DL, DIFF, DIFF_PCT) will be used if present.
+    Numeric columns (VALUE_ORIG, VALUE_DL, DIFF, DIFF_PCT) will be used if present.
     """
     parts = []
     try:
@@ -127,7 +127,6 @@ def get_surface_df_for_overlay(overlay_src: str) -> pd.DataFrame:
         return pd.DataFrame()
 
     surf = pd.concat(parts, ignore_index=True)
-    # keep only rows with both lon/lat available
     if not {"LONGITUDE", "LATITUDE"}.issubset(surf.columns):
         return pd.DataFrame()
     surf = surf.dropna(subset=["LONGITUDE", "LATITUDE"]).copy()
@@ -136,7 +135,6 @@ def get_surface_df_for_overlay(overlay_src: str) -> pd.DataFrame:
 # --- Overlay helper (auto-pick by current radio 'source') ---------------------
 def get_surface_df_by_source(source: str) -> pd.DataFrame:
     """Return surface df that matches current drillhole 'source' selection."""
-    # --- Fix for "All": build from three split files with consistent SOURCE tags ---
     if source == "All":
         parts = []
         for tag, p in [("orig_only", SURF_ORIGONLY),
@@ -146,15 +144,13 @@ def get_surface_df_by_source(source: str) -> pd.DataFrame:
             if df.empty:
                 continue
             df = df.copy()
-          
             df = df.rename(columns={"DLAT": "LATITUDE", "DLONG": "LONGITUDE"})
-            if not {"LONGITUDE","LATITUDE"}.issubset(df.columns):
+            if not {"LONGITUDE", "LATITUDE"}.issubset(df.columns):
                 continue
             df["SOURCE"] = tag 
             parts.append(df)
         return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
 
-    
     mapping = {
         "Overlap":   SURF_OVERLAP,
         "Orig-only": SURF_ORIGONLY,
@@ -164,18 +160,12 @@ def get_surface_df_by_source(source: str) -> pd.DataFrame:
     if p is None:
         return pd.DataFrame()
     df = load_surface(p).rename(columns={"DLAT": "LATITUDE", "DLONG": "LONGITUDE"})
-    if df.empty or not {"LONGITUDE","LATITUDE"}.issubset(df.columns):
+    if df.empty or not {"LONGITUDE", "LATITUDE"}.issubset(df.columns):
         return pd.DataFrame()
     if "SOURCE" not in df.columns:
         df = df.copy()
         df["SOURCE"] = {"Overlap":"overlap","Orig-only":"orig_only","DL-only":"dl_only"}[source]
-    return df.dropna(subset=["LONGITUDE","LATITUDE"]).copy()
-
-# ----------------- Custom palettes -----------------
-HOT_CS = [
-    [0.00, "#000000"], [0.20, "#2b0000"], [0.40, "#7a0000"],
-    [0.70, "#ff3b00"], [1.00, "#ffff66"],
-]
+    return df.dropna(subset=["LONGITUDE", "LATITUDE"]).copy()
 
 # ----------------- Data loader -----------------
 @st.cache_data
@@ -183,30 +173,32 @@ def safe_read_csv(p: Path) -> pd.DataFrame:
     if not p.exists():
         return pd.DataFrame()
     df = pd.read_csv(p)
-    for c in ["LONGITUDE","LATITUDE","DEPTH","CU_ORIG","CU_DL","DIFF","DIFF_PCT","SOURCE"]:
+    for c in ["LONGITUDE","LATITUDE","DEPTH","VALUE_ORIG","VALUE_DL","DIFF","DIFF_PCT","SOURCE"]:
         if c in df.columns and c != "SOURCE":
             df[c] = pd.to_numeric(df[c], errors="coerce")
-    # derive DIFF_PCT if possible
-    if "DIFF_PCT" not in df.columns and {"DIFF","CU_DL"}.issubset(df.columns):
+
+    # derive DIFF_PCT if missing
+    if "DIFF_PCT" not in df.columns and {"DIFF","VALUE_ORIG"}.issubset(df.columns):
         eps = 1e-9
-        denom = df["CU_DL"].where(df["CU_DL"].abs() >= eps, np.nan)
+        denom = df["VALUE_ORIG"].where(df["VALUE_ORIG"].abs() >= eps, np.nan)
         df["DIFF_PCT"] = 100.0 * df["DIFF"] / denom
+
     return df
 
-
 # ------------------------------ Header ---------------------------
+element = st.session_state.get("element", "Element")
 
 # --- Page title row with three columns ---
 c1, c2, c3 = st.columns([0.6, 0.2, 0.2])  # adjust proportions as needed
 
 with c1:
     st.markdown(
-        """
+        f"""
         <h1 style="margin-bottom:0.25rem; font-size:2.0rem;">
-        Medium/Coarse-level • Drillhole
+        Medium/Coarse-level • Drillhole ({element})
         </h1>
         <p style="color:#555; margin-top:0;">
-        Aggregated (points/voxels)
+        Aggregated (points/voxels) for {element} values
         </p>
         """,
         unsafe_allow_html=True,
@@ -218,13 +210,23 @@ with c2:
 with c3:
     st.page_link("pages/09_Insights.py", label="View insights")
 
-
 # ----------------- Voxelization (grid) -----------------
 def voxelize_points(df: pd.DataFrame, nx: int, ny: int, nz: int,
                     value_col: str, agg: str = "mean", min_count: int = 1):
-    """Aggregate points into a regular 3D grid and return voxel centers + values."""
+    """
+    Aggregate points into a regular 3D grid and return voxel centers + values.
+
+    Returns dict with:
+      - Xc, Yc, Zc: voxel centers
+      - V: aggregated value per voxel
+      - N: sample count per voxel (always provided)
+      - x_edges, y_edges, z_edges: bin edges
+
+    Supported agg: "mean", "median", "count"
+    """
     if df.empty:
         return None
+
     x = df["LONGITUDE"].to_numpy()
     y = df["LATITUDE"].to_numpy()
     z = df["DEPTH"].to_numpy()
@@ -242,11 +244,15 @@ def voxelize_points(df: pd.DataFrame, nx: int, ny: int, nz: int,
     dfb = pd.DataFrame({"flat": flat, "val": v})
 
     if agg == "median":
-        agg_df = dfb.groupby("flat").agg(val=("val","median"), cnt=("val","size")).reset_index()
-    else:
-        agg_df = dfb.groupby("flat").agg(val=("val","mean"),   cnt=("val","size")).reset_index()
+        agg_df = dfb.groupby("flat").agg(val=("val", "median"), N=("val", "size")).reset_index()
+    elif agg == "count":
+        agg_df = dfb.groupby("flat").agg(N=("val", "size")).reset_index()
+        agg_df["val"] = agg_df["N"].astype(float)   
+    else:  # mean (default)
+        agg_df = dfb.groupby("flat").agg(val=("val", "mean"), N=("val", "size")).reset_index()
 
-    agg_df = agg_df[agg_df["cnt"] >= int(min_count)]
+    # apply min_count filter
+    agg_df = agg_df[agg_df["N"] >= int(min_count)]
     if len(agg_df) == 0:
         return None
 
@@ -259,14 +265,17 @@ def voxelize_points(df: pd.DataFrame, nx: int, ny: int, nz: int,
     Yc = (y_edges[iy] + y_edges[iy + 1]) / 2.0
     Zc = (z_edges[iz] + z_edges[iz + 1]) / 2.0
     V  = agg_df["val"].to_numpy()
+    N  = agg_df["N"].to_numpy()
 
-    return {"Xc":Xc, "Yc":Yc, "Zc":Zc, "V":V,
-            "x_edges":x_edges, "y_edges":y_edges, "z_edges":z_edges}
+    return {
+        "Xc": Xc, "Yc": Yc, "Zc": Zc, "V": V, "N": N,
+        "x_edges": x_edges, "y_edges": y_edges, "z_edges": z_edges
+    }
 
 # ----------------- Build voxel cubes (Mesh3d) -----------------
 def build_voxel_mesh(Xc, Yc, Zc, V, dx, dy, dz,
                      cmin, cmax, colorscale,
-                     opacity=0.6, colorbar_title="value", ticksuffix="",
+                     opacity=0.6, colorbar_title=None, ticksuffix="",
                      max_cubes=3000, pick_top_by_abs=True) -> go.Mesh3d:
     n = len(V)
     if n == 0:
@@ -301,6 +310,10 @@ def build_voxel_mesh(Xc, Yc, Zc, V, dx, dy, dz,
         base_f = 12*k
         I[base_f:base_f+12] = tri[:,0]; J[base_f:base_f+12] = tri[:,1]; K[base_f:base_f+12] = tri[:,2]
 
+    if colorbar_title is None:
+        element = st.session_state.get("element", "Element")
+        colorbar_title = f"{element} value"
+
     return go.Mesh3d(
         x=X, y=Y, z=Z, i=I, j=J, k=K,
         intensity=INT, colorscale=colorscale, cmin=cmin, cmax=cmax,
@@ -315,52 +328,49 @@ cfg = load_cfg()
 def _read_and_fix(kind: str, split: str) -> pd.DataFrame:
     df = read_points(kind, split, cfg)
 
-    
     df = df.rename(columns=lambda c: str(c).upper())
-    if "DLAT" in df.columns:  df = df.rename(columns={"DLAT": "LATITUDE"})
-    if "DLONG" in df.columns: df = df.rename(columns={"DLONG": "LONGITUDE"})
+    if "DLAT" in df.columns:
+        df = df.rename(columns={"DLAT": "LATITUDE"})
+    if "DLONG" in df.columns:
+        df = df.rename(columns={"DLONG": "LONGITUDE"})
 
-   
     if "SOURCE" in df.columns:
         s = df["SOURCE"].astype(str).str.strip().str.lower()
     else:
         s = pd.Series("", index=df.index)
 
-    
     norm = s.map({
         "orig": "orig_only", "original": "orig_only", "orig_only": "orig_only", "origonly": "orig_only",
         "dl": "dl_only", "dl_only": "dl_only", "dlonly": "dl_only",
         "overlap": "overlap", "common": "overlap",
-        "drill_all": "drill_all", "all": "drill_all", "surface_all":"surface_all",
+        "drill_all": "drill_all", "all": "drill_all", "surface_all": "surface_all",
     })
 
-    
-    tag_by_split = {"overlap":"overlap", "origonly":"orig_only", "dlonly":"dl_only", "all":"drill_all"}
+    tag_by_split = {"overlap": "overlap", "origonly": "orig_only", "dlonly": "dl_only", "all": "drill_all"}
     tag = tag_by_split.get(split, "unknown")
-    if split in ("overlap","origonly","dlonly"):
+    if split in ("overlap", "origonly", "dlonly"):
         df["SOURCE"] = tag
     else:
         df["SOURCE"] = norm.fillna(tag)
 
-   
-    for c in ["LONGITUDE","LATITUDE","DEPTH","CU_ORIG","CU_DL","DIFF","DIFF_PCT"]:
+    for c in ["LONGITUDE", "LATITUDE", "DEPTH", "VALUE_ORIG", "VALUE_DL", "DIFF", "DIFF_PCT"]:
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce")
-    if "DIFF_PCT" not in df.columns and {"DIFF","CU_DL"}.issubset(df.columns):
+
+    if "DIFF_PCT" not in df.columns and {"DIFF", "VALUE_ORIG"}.issubset(df.columns):
         eps = 1e-9
-        denom = df["CU_DL"].where(df["CU_DL"].abs() >= eps, np.nan)
+        denom = df["VALUE_ORIG"].where(df["VALUE_ORIG"].abs() >= eps, np.nan)
         df["DIFF_PCT"] = 100.0 * df["DIFF"] / denom
 
-    return df.dropna(subset=["LONGITUDE","LATITUDE"]).copy()
+    return df.dropna(subset=["LONGITUDE", "LATITUDE"]).copy()
 
 
-
+# ----------------- Load drillhole splits -----------------
 df_all      = _read_and_fix("drillhole", "all")
 df_overlap  = _read_and_fix("drillhole", "overlap")
 df_origonly = _read_and_fix("drillhole", "origonly")
 df_dlonly   = _read_and_fix("drillhole", "dlonly")
 df_union    = pd.concat([df_all, df_overlap, df_origonly, df_dlonly], ignore_index=True)
-
 
 # ---- Fixed category order & colors (same as p05) ----
 CAT_ORDER = ["orig_only", "overlap", "dl_only"]  
@@ -370,12 +380,18 @@ CAT_COLORS = {
     "dl_only":   "#ff554b", 
 }
 
-# ───────────────────────── Sidebar controls (organized) ─────────────────────────
+# ───────────────── Sidebar controls ─────────────────
+def _set_active_tab(name: str):
+    st.session_state["agg_view_tab"] = name
 
-# 1) Data source
+if "agg_view_tab" not in st.session_state:
+    st.session_state["agg_view_tab"] = "3D Points"
+
+source_opts = ["All", "Overlap", "Orig-only", "DL-only"]
+
 source = st.sidebar.radio(
     "Data source",
-    ["All", "Overlap", "Orig-only", "DL-only"],
+    source_opts,
     index=0,
     horizontal=True,
     key="src_mode"
@@ -395,11 +411,10 @@ def pick_source_df():
         if parts:                            
             return pd.concat(parts, ignore_index=True)
 
-        
         if not df_all.empty:
             dd = df_all.copy()
-            o = dd["CU_ORIG"].notna() if "CU_ORIG" in dd.columns else False
-            d = dd["CU_DL"].notna()   if "CU_DL"   in dd.columns else False
+            o = dd["VALUE_ORIG"].notna() if "VALUE_ORIG" in dd.columns else False
+            d = dd["VALUE_DL"].notna()   if "VALUE_DL"   in dd.columns else False
             dd["SOURCE"] = np.select(
                 [o & d, o & ~d, ~o & d],
                 ["overlap", "orig_only", "dl_only"],
@@ -417,12 +432,14 @@ def pick_source_df():
 # 2) Value (only when source ≠ All). In "All" we color by SOURCE categories.
 category_mode = (source == "All")
 if not category_mode:
+    element = st.session_state.get("element", "Element")
     VAL_CHOICES = {
-        "Overlap":   [("DIFF (DL - ORIG)", "DIFF"),
-                      ("DIFF % ((DL-ORIG)/DL*100)", "DIFF_PCT"),
-                      ("CU_ORIG","CU_ORIG"), ("CU_DL","CU_DL")],
-        "Orig-only": [("CU_ORIG","CU_ORIG")],
-        "DL-only":   [("CU_DL","CU_DL")],
+        "Overlap":   [(f"DIFF (DL - ORIG)", "DIFF"),
+                      (f"DIFF % ((DL-ORIG)/ORIG*100)", "DIFF_PCT"),
+                      (f"{element} ORIG", "VALUE_ORIG"),
+                      (f"{element} DL", "VALUE_DL")],
+        "Orig-only": [(f"{element} ORIG", "VALUE_ORIG")],
+        "DL-only":   [(f"{element} DL", "VALUE_DL")],
     }
     opts = VAL_CHOICES[source]
     labels  = [lab for lab, _ in opts]
@@ -451,8 +468,7 @@ yr = st.sidebar.slider("Latitude",  lat_min, lat_max,  (lat_min, lat_max))
 zr = st.sidebar.slider("Depth",     0.0,     DEPTH_MAX, (depth_min, DEPTH_MAX))
 
 
-# 5) Overlays (Surface) — wired later when surface layers are ready
-
+# 5) Overlays (Surface)
 overlay_on = st.sidebar.toggle("Overlay surface", value=False)
 if overlay_on:
     # Allow negative Z so the surface can "float" above the scene
@@ -463,21 +479,26 @@ else:
 
 # 6) Display (numeric values only): palette & clipping
 if not category_mode:
+    element = st.session_state.get("element", "Element")
     palette = "Portland"
-    clip_mode    = st.sidebar.selectbox("Clip mode", ["Absolute", "Percentile"], index=1)
+    clip_mode    = st.sidebar.selectbox(f"Clip mode for {element}", ["Absolute", "Percentile"], index=1)
     max_abs_clip = 500.0
     pctl         = 95.0
     if clip_mode == "Absolute":
-        max_abs_clip = st.sidebar.number_input("Max value to show", min_value=1.0, value=max_abs_clip, step=10.0)
+        max_abs_clip = st.sidebar.number_input(
+            f"Max {element} value to show", 
+            min_value=1.0, value=max_abs_clip, step=10.0
+        )
     else:
-        pctl = st.sidebar.slider("Clip range at percentile", min_value=50.0, max_value=99.9, value=95.0, step=0.1)
+        pctl = st.sidebar.slider(
+            f"Clip {element} range at percentile", 
+            min_value=50.0, max_value=99.9, value=95.0, step=0.1
+        )
 else:
     palette = None
     clip_mode = None
     pctl = 95.0
     max_abs_clip = 500.0
-
-
 
 # --- Guards: ensure view-specific params exist before we filter base df ---
 # (so filters that reference these won't crash if the user hasn't visited a tab yet)
@@ -545,6 +566,7 @@ if (not category_mode) and value_col in ("DIFF","DIFF_PCT") and min_abs_diff > 0
 
 # Final filtered base
 base = base_raw[mask].copy()
+element = st.session_state.get("element", "Element") 
 
 if base.empty or (value_col != "__SOURCE__" and value_col not in base.columns):
     st.warning("No data under current filters/value selection.")
@@ -575,77 +597,91 @@ def sequential_color_and_range(series: np.ndarray, is_abs_clip: bool, abs_max: f
         if vmax <= 0: vmax = 1.0
     return (pick_seq_scale(name), (0.0, vmax))
 
-
-
 # ───────────────────────── View tabs on the RIGHT ─────────────────────────
 tab_points, tab_voxels, tab_slice = st.tabs(["3D Points", "3D Voxels", "2D Slice"])
 
-# remember which tab user is on (so sidebar can “know” the active view if needed)
-def _set_active_tab(name: str):
-    st.session_state["agg_view_tab"] = name
+element = st.session_state.get("element", "Element")
+
+def label_for_value_mode(mode: str) -> str:
+    if mode == "DIFF":
+        return f"{element} diff (DL − ORIG)"
+    if mode == "DIFF_PCT":
+        return f"{element} diff %"
+    if mode == "VALUE_ORIG":
+        return f"{element} (Original)"
+    if mode == "VALUE_DL":
+        return f"{element} (DL)"
+    return mode
 
 with tab_points:
     _set_active_tab("3D Points")
 
-    c1, c2, c3 = st.columns([1,1,1.2])
+    # --- Controls ---
+    c1, c2, c3 = st.columns([1, 1, 1.2])
     with c1:
-        point_size = st.slider("Point size", 1, 10,
-                            int(st.session_state.get("pts_size_main", 2)),
-                            key="pts_size_main")
+        point_size = st.slider(
+            "Point size", 1, 10,
+            int(st.session_state.get("pts_size_main", 2)),
+            key="pts_size_main"
+        )
     with c2:
-        max_points = st.number_input("Max points", 1_000, 100_000,
-                                    int(st.session_state.get("pts_cap_main", 100_000)), 1_000,
-                                    key="pts_cap_main")
+        max_points = st.number_input(
+            "Max points", 1_000, 100_000,
+            int(st.session_state.get("pts_cap_main", 100_000)), 1_000,
+            key="pts_cap_main"
+        )
     with c3:
         min_abs_diff = 0.0
-        if (not category_mode) and (value_col in ("DIFF","DIFF_PCT")):
-            min_abs_diff = st.number_input("Min |value|", 0.0,
-                                        value=float(st.session_state.get("pts_min_abs_main", 0.0)), step=1.0,
-                                        key="pts_min_abs_main")
+        if (not category_mode) and (value_col in ("DIFF", "DIFF_PCT")):
+            min_abs_diff = st.number_input(
+                "Min |value|", 0.0,
+                value=float(st.session_state.get("pts_min_abs_main", 0.0)),
+                step=1.0, key="pts_min_abs_main"
+            )
 
-    view = base.dropna(subset=["LONGITUDE","LATITUDE","DEPTH"]).copy()
+    # --- Data prep ---
+    view = base.dropna(subset=["LONGITUDE", "LATITUDE", "DEPTH"]).copy()
     if len(view) > max_points:
         is_surf = view["_is_surface"].fillna(False)
         surf = view[is_surf]
         dh   = view[~is_surf]
 
-        
         keep_min_dh = min(20000, max_points // 3)
 
-        
         n_surf, n_dh = len(surf), len(dh)
         if n_surf + n_dh == 0:
             view = view.sample(max_points, random_state=42)
         else:
-            
             dh_quota   = int(max_points * (n_dh / (n_surf + n_dh)))
             surf_quota = max_points - dh_quota
-            
+
             dh_quota   = max(1, max(keep_min_dh, min(dh_quota, len(dh))))
             surf_quota = max(1, max_points - dh_quota)
             surf_quota = min(surf_quota, len(surf))
 
-            dh_keep   = dh.sample(dh_quota, random_state=42) if len(dh)   > dh_quota   else dh
+            dh_keep   = dh.sample(dh_quota, random_state=42) if len(dh) > dh_quota else dh
             surf_keep = surf.sample(surf_quota, random_state=42) if len(surf) > surf_quota else surf
             view = pd.concat([dh_keep, surf_keep], ignore_index=True)
 
-
-
-    if category_mode:
-
+    # --- Plot ---
+    if category_mode:  # "All" mode
         view = view.copy()
         view["SOURCE"] = pd.Categorical(view["SOURCE"], categories=CAT_ORDER, ordered=True)
 
         fig = px.scatter_3d(
             view, x="LONGITUDE", y="LATITUDE", z="DEPTH",
             color="SOURCE",
-            color_discrete_map=CAT_COLORS,   
+            color_discrete_map=CAT_COLORS,
             opacity=0.85
         )
         fig.update_traces(marker=dict(size=point_size))
         fig.update_layout(
             scene=dict(zaxis=dict(autorange="reversed")),
-            legend=dict(title="SOURCE", font=dict(size=18), itemsizing="constant"),
+            legend=dict(
+                title=f"{element} source",
+                font=dict(size=18),
+                itemsizing="constant"
+            ),
             height=800, margin=dict(l=0, r=0, t=50, b=10)
         )
         st.plotly_chart(fig, use_container_width=True)
@@ -657,28 +693,41 @@ with tab_points:
         g["% of points"] = (100.0 * g["Points"] / total).round(2).astype(str) + "%"
         g["Source"] = pd.Categorical(g["Source"], categories=CAT_ORDER, ordered=True)
         g = g.sort_values("Source")
-        st.dataframe(g[["Source","Points","% of points"]], use_container_width=True, hide_index=True)
-    else:
+        st.dataframe(g[["Source", "Points", "% of points"]],
+                     use_container_width=True, hide_index=True)
+
+    else:  # Numeric value mode
         view = view.dropna(subset=[value_col]).copy()
         arr = view[value_col].to_numpy()
         if value_col == "DIFF_PCT":
-            cs, (vmin, vmax) = diverging_color_and_range(arr, clip_mode=="Absolute", abs_max=max_abs_clip, p=pctl)
+            cs, (vmin, vmax) = diverging_color_and_range(
+                arr, clip_mode=="Absolute", abs_max=max_abs_clip, p=pctl
+            )
             ticksuf = "%"
         elif value_col == "DIFF":
-            cs, (vmin, vmax) = diverging_color_and_range(arr, clip_mode=="Absolute", abs_max=max_abs_clip, p=pctl)
+            cs, (vmin, vmax) = diverging_color_and_range(
+                arr, clip_mode=="Absolute", abs_max=max_abs_clip, p=pctl
+            )
             ticksuf = ""
         else:
-            cs, (vmin, vmax) = sequential_color_and_range(arr, clip_mode=="Absolute", abs_max=max_abs_clip, p=pctl, name=palette)
+            cs, (vmin, vmax) = sequential_color_and_range(
+                arr, clip_mode=="Absolute", abs_max=max_abs_clip, p=pctl, name=palette
+            )
             ticksuf = ""
+
         fig = px.scatter_3d(
             view, x="LONGITUDE", y="LATITUDE", z="DEPTH",
-            color=value_col, color_continuous_scale=cs, range_color=[vmin, vmax],
+            color=value_col,
+            color_continuous_scale=cs, range_color=[vmin, vmax],
             opacity=0.85
         )
         fig.update_traces(marker=dict(size=point_size))
         fig.update_layout(
             scene=dict(zaxis=dict(autorange="reversed")),
-            coloraxis_colorbar=dict(title=value_mode, ticksuffix=ticksuf),
+            coloraxis_colorbar=dict(
+                title=label_for_value_mode(value_col),
+                ticksuffix=ticksuf
+            ),
             height=800, margin=dict(l=0, r=0, t=50, b=10)
         )
         st.plotly_chart(fig, use_container_width=True)
@@ -686,181 +735,193 @@ with tab_points:
 with tab_voxels:
     _set_active_tab("3D Voxels")
 
-    # --- 3D Voxels settings (compact 3-column layout) ---
-    # Row 1: NX / NY / NZ
-    vcol1, vcol2, vcol3 = st.columns(3)
-    with vcol1:
-        nx = st.slider(
-            "NX (lon bins)", 8, 160,
-            int(st.session_state.get("vox_nx", 50)), key="vox_nx"
-        )
-    with vcol2:
-        ny = st.slider(
-            "NY (lat bins)", 8, 160,
-            int(st.session_state.get("vox_ny", 50)), key="vox_ny"
-        )
-    with vcol3:
-        nz = st.slider(
-            "NZ (depth bins)", 6, 100,
-            int(st.session_state.get("vox_nz", 30)), key="vox_nz"
-        )
+    if source == "All":
+        st.info("‘All’ mode is only available in 3D Points. Please choose Overlap / Orig-only / DL-only for voxels.")
+    else:
+        # --- Ensure numeric value_col ---
+        if value_col == "__SOURCE__":
+            if "DIFF" in df_union.columns:
+                value_col = "DIFF"
+            elif "VALUE_ORIG" in df_union.columns:
+                value_col = "VALUE_ORIG"
+            elif "VALUE_DL" in df_union.columns:
+                value_col = "VALUE_DL"
+            else:
+                st.warning("No numeric column available for voxels.")
+        
+        # --- 3D Voxels settings ---
+        vcol1, vcol2, vcol3 = st.columns(3)
+        with vcol1:
+            nx = st.slider("NX (lon bins)", 8, 160, int(st.session_state.get("vox_nx", 50)), key="vox_nx")
+        with vcol2:
+            ny = st.slider("NY (lat bins)", 8, 160, int(st.session_state.get("vox_ny", 50)), key="vox_ny")
+        with vcol3:
+            nz = st.slider("NZ (depth bins)", 6, 100, int(st.session_state.get("vox_nz", 30)), key="vox_nz")
 
-    # Row 2: min count / aggregator / opacity
-    vcol4, vcol5, vcol6 = st.columns(3)
-    with vcol4:
-        min_count_voxel = st.number_input(
-            "Min samples/voxel", 1, 200,
-            int(st.session_state.get("vox_min_cnt", 3)), 1, key="vox_min_cnt"
-        )
-    with vcol5:
-        agg_stat = st.selectbox(
-            "Aggregator", ["mean", "median"],
-            index=0 if st.session_state.get("vox_agg","mean")=="mean" else 1,
-            key="vox_agg"
-        )
-    with vcol6:
-        voxel_opacity = st.slider(
-            "Cube opacity", 0.1, 1.0,
-            float(st.session_state.get("vox_opacity", 0.6)), 0.05, key="vox_opacity"
-        )
+        vcol4, vcol5, vcol6 = st.columns(3)
+        with vcol4:
+            min_count_voxel = st.number_input(
+                "Min samples/voxel", 1, 200, int(st.session_state.get("vox_min_cnt", 3)), 1, key="vox_min_cnt"
+            )
+        with vcol5:
+            agg_stat = st.selectbox(
+                "Aggregator", ["mean", "median"],
+                index=0 if st.session_state.get("vox_agg", "mean") == "mean" else 1,
+                key="vox_agg"
+            )
+        with vcol6:
+            voxel_opacity = st.slider(
+                "Cube opacity", 0.1, 1.0,
+                float(st.session_state.get("vox_opacity", 0.6)), 0.05, key="vox_opacity"
+            )
 
-    need = ["LONGITUDE","LATITUDE","DEPTH"]
-    if not category_mode:
-        need += [value_col]
-    num = base.dropna(subset=need).copy()
-
-    if not category_mode:
+        # --- Prepare data ---
+        need = ["LONGITUDE", "LATITUDE", "DEPTH", value_col]
+        num = base.dropna(subset=need).copy()
         num[value_col] = pd.to_numeric(num[value_col], errors="coerce")
         num = num.dropna(subset=[value_col])
-    if num.empty:
-        st.info("No numeric rows for voxels under current filters/value.")
-    else:
-        vcol = value_col if not category_mode else ("CU_DL" if "CU_DL" in num.columns else "DEPTH")
-        vox = voxelize_points(num, nx=nx, ny=ny, nz=nz, value_col=vcol, agg=agg_stat, min_count=min_count_voxel)
-        if vox is None:
-            st.info("No voxels under current parameters. Try decreasing NX/NY/NZ or Min samples per voxel.")
+
+        if num.empty:
+            st.info("No numeric rows for voxels under current filters/value.")
         else:
-            Xc, Yc, Zc, V = vox["Xc"], vox["Yc"], vox["Zc"], vox["V"]
-            dx = float(np.diff(vox["x_edges"]).mean()); dy = float(np.diff(vox["y_edges"]).mean()); dz = float(np.diff(vox["z_edges"]).mean())
-
-            if (not category_mode) and value_col in ("DIFF","DIFF_PCT"):
-                if value_col == "DIFF_PCT":
-                    cs, (vmin, vmax) = diverging_color_and_range(V, clip_mode=="Absolute", abs_max=max_abs_clip, p=pctl); ticksuf="%"
-                else:
-                    cs, (vmin, vmax) = diverging_color_and_range(V, clip_mode=="Absolute", abs_max=max_abs_clip, p=pctl); ticksuf=""
+            vox = voxelize_points(
+                num, nx=nx, ny=ny, nz=nz,
+                value_col=value_col, agg=agg_stat,
+                min_count=min_count_voxel
+            )
+            if vox is None:
+                st.info("No voxels under current parameters. Try decreasing NX/NY/NZ or Min samples per voxel.")
             else:
-                cs, (vmin, vmax) = sequential_color_and_range(V, clip_mode=="Absolute", abs_max=max_abs_clip, p=pctl, name=(palette or "Viridis")); ticksuf=""
+                Xc, Yc, Zc, V = vox["Xc"], vox["Yc"], vox["Zc"], vox["V"]
+                dx = float(np.diff(vox["x_edges"]).mean())
+                dy = float(np.diff(vox["y_edges"]).mean())
+                dz = float(np.diff(vox["z_edges"]).mean())
 
-            trace = build_voxel_mesh(
-                Xc, Yc, Zc, V,
-                dx=dx, dy=dy, dz=dz,
-                cmin=vmin, cmax=vmax,
-                colorscale=cs,
-                opacity=voxel_opacity,
-                colorbar_title=(value_mode if not category_mode else vcol),
-                ticksuffix=ticksuf,
-                max_cubes=3000, pick_top_by_abs=True
-            )
-            figv = go.Figure(data=[trace])
-            figv.update_layout(
-                scene=dict(zaxis=dict(autorange="reversed")),
-                height=800, margin=dict(l=0, r=0, t=50, b=10)
-            )
-            st.plotly_chart(figv, use_container_width=True)
+                # --- Color mapping ---
+                if value_col == "DIFF_PCT":
+                    cs, (vmin, vmax) = diverging_color_and_range(V, clip_mode=="Absolute",
+                                                                abs_max=max_abs_clip, p=pctl)
+                    ticksuf = "%"
+                elif value_col == "DIFF":
+                    cs, (vmin, vmax) = diverging_color_and_range(V, clip_mode=="Absolute",
+                                                                abs_max=max_abs_clip, p=pctl)
+                    ticksuf = ""
+                else:
+                    cs, (vmin, vmax) = sequential_color_and_range(
+                        V, clip_mode=="Absolute", abs_max=max_abs_clip, p=pctl,
+                        name=(palette or "Viridis")
+                    )
+                    ticksuf = ""
+
+                trace = build_voxel_mesh(
+                    Xc, Yc, Zc, V,
+                    dx=dx, dy=dy, dz=dz,
+                    cmin=vmin, cmax=vmax,
+                    colorscale=cs,
+                    opacity=voxel_opacity,
+                    colorbar_title=label_for_value_mode(value_col),
+                    ticksuffix=ticksuf,
+                    max_cubes=3000, pick_top_by_abs=True
+                )
+                figv = go.Figure(data=[trace])
+                figv.update_layout(
+                    scene=dict(zaxis=dict(autorange="reversed")),
+                    height=800, margin=dict(l=0, r=0, t=50, b=10)
+                )
+                st.plotly_chart(figv, use_container_width=True)
 
 
 with tab_slice:
     _set_active_tab("2D Slice")
 
-    # Row with Slice orientation and Max points side by side
-    c1, c2 = st.columns([2, 1])
-    with c1:
-        slice_mode = st.radio(
-            "Slice orientation",
-            ["XY (map)", "XZ (cross-section)", "YZ (cross-section)"],
-            index=0,
-            horizontal=True,
-            key="slice_mode_main"
-        )
-    with c2:
-        max_points_2d = st.number_input(
-            "Max points (2D slice)",
-            1_000,
-            100_000,
-            int(st.session_state.get("pts_cap_slice", 100_000)),
-            1_000,
-            key="pts_cap_slice"
-        )
-
-    # Prepare data
-    view2d = base.dropna(subset=["LONGITUDE", "LATITUDE", "DEPTH"]).copy()
-    if view2d.empty:
-        st.info("No rows available for 2D slice.")
+    if source == "All":
+        st.info("‘All’ mode is only available in 3D Points. Please choose Overlap / Orig-only / DL-only for 2D slice.")
     else:
-        if len(view2d) > max_points_2d:
-            view2d = view2d.sample(max_points_2d, random_state=42)
+        # --- Ensure numeric value_col ---
+        if value_col == "__SOURCE__":
+            if "DIFF" in df_union.columns:
+                value_col = "DIFF"
+            elif "VALUE_ORIG" in df_union.columns:
+                value_col = "VALUE_ORIG"
+            elif "VALUE_DL" in df_union.columns:
+                value_col = "VALUE_DL"
+            else:
+                st.warning("No numeric column available for 2D slice.")
 
-        # --- XY Map slice ---
-        if slice_mode == "XY (map)":
-            st.subheader(f"XY Map slice (Depth {zr[0]}–{zr[1]} m)")
-            if value_col == "__SOURCE__":
+        # --- Slice orientation + Max points ---
+        c1, c2 = st.columns([2, 1])
+        with c1:
+            slice_mode = st.radio(
+                "Slice orientation",
+                ["XY (map)", "XZ (cross-section)", "YZ (cross-section)"],
+                index=0,
+                horizontal=True,
+                key="slice_mode_main"
+            )
+        with c2:
+            max_points_2d = st.number_input(
+                "Max points (2D slice)", 1_000, 100_000,
+                int(st.session_state.get("pts_cap_slice", 100_000)), 1_000,
+                key="pts_cap_slice"
+            )
+
+        # --- Prepare data ---
+        view2d = base.dropna(subset=["LONGITUDE", "LATITUDE", "DEPTH", value_col]).copy()
+
+        if view2d.empty:
+            st.info("No rows available for 2D slice.")
+        else:
+            if len(view2d) > max_points_2d:
+                view2d = view2d.sample(max_points_2d, random_state=42)
+
+            # --- Color setup ---
+            arr = view2d[value_col].to_numpy()
+            if value_col == "DIFF_PCT":
+                cs, (vmin, vmax) = diverging_color_and_range(arr, clip_mode=="Absolute",
+                                                             abs_max=max_abs_clip, p=pctl)
+                ticksuf = "%"
+            elif value_col == "DIFF":
+                cs, (vmin, vmax) = diverging_color_and_range(arr, clip_mode=="Absolute",
+                                                             abs_max=max_abs_clip, p=pctl)
+                ticksuf = ""
+            else:
+                cs, (vmin, vmax) = sequential_color_and_range(arr, clip_mode=="Absolute",
+                                                              abs_max=max_abs_clip, p=pctl,
+                                                              name=(palette or "Viridis"))
+                ticksuf = ""
+            color_args = dict(
+                color=value_col, color_continuous_scale=cs,
+                range_color=[vmin, vmax], opacity=0.8
+            )
+            colorbar = dict(title=label_for_value_mode(value_col), ticksuffix=ticksuf)
+
+            # --- XY slice ---
+            if slice_mode == "XY (map)":
+                st.subheader(f"XY Map slice (Depth {zr[0]}–{zr[1]} m)")
                 fig2d = px.scatter(
-                    view2d, x="LONGITUDE", y="LATITUDE", color="SOURCE",
-                    color_discrete_map=CAT_COLORS, opacity=0.8,
+                    view2d, x="LONGITUDE", y="LATITUDE", **color_args,
                     hover_data=["DEPTH"], render_mode="webgl"
                 )
-            else:
-                fig2d = px.scatter(
-                    view2d, x="LONGITUDE", y="LATITUDE", color=value_col,
-                    color_continuous_scale="Viridis", opacity=0.8,
-                    hover_data=["DEPTH", value_col], render_mode="webgl"
-                )
-            st.plotly_chart(fig2d, use_container_width=True)
 
-        # --- XZ Cross-section ---
-        elif slice_mode == "XZ (cross-section)":
-            st.subheader(f"XZ Cross-section (Latitude {yr[0]}–{yr[1]})")
-            if value_col == "__SOURCE__":
+            # --- XZ slice ---
+            elif slice_mode == "XZ (cross-section)":
+                st.subheader(f"XZ Cross-section (Latitude {yr[0]}–{yr[1]})")
                 fig2d = px.scatter(
-                    view2d, x="LONGITUDE", y="DEPTH", color="SOURCE",
-                    color_discrete_map=CAT_COLORS, opacity=0.8,
+                    view2d, x="LONGITUDE", y="DEPTH", **color_args,
                     hover_data=["LATITUDE"], render_mode="webgl"
                 )
-            else:
-                fig2d = px.scatter(
-                    view2d, x="LONGITUDE", y="DEPTH", color=value_col,
-                    color_continuous_scale="Viridis", opacity=0.8,
-                    hover_data=["LATITUDE", value_col], render_mode="webgl"
-                )
-            fig2d.update_yaxes(autorange="reversed", title="Depth (m)")
-            st.plotly_chart(fig2d, use_container_width=True)
+                fig2d.update_yaxes(autorange="reversed", title="Depth (m)")
 
-        # --- YZ Cross-section ---
-        elif slice_mode == "YZ (cross-section)":
-            st.subheader(f"YZ Cross-section (Longitude {xr[0]}–{xr[1]})")
-            if value_col == "__SOURCE__":
+            # --- YZ slice ---
+            elif slice_mode == "YZ (cross-section)":
+                st.subheader(f"YZ Cross-section (Longitude {xr[0]}–{xr[1]})")
                 fig2d = px.scatter(
-                    view2d, x="LATITUDE", y="DEPTH", color="SOURCE",
-                    color_discrete_map=CAT_COLORS, opacity=0.8,
+                    view2d, x="LATITUDE", y="DEPTH", **color_args,
                     hover_data=["LONGITUDE"], render_mode="webgl"
                 )
-            else:
-                fig2d = px.scatter(
-                    view2d, x="LATITUDE", y="DEPTH", color=value_col,
-                    color_continuous_scale="Viridis", opacity=0.8,
-                    hover_data=["LONGITUDE", value_col], render_mode="webgl"
-                )
-            fig2d.update_yaxes(autorange="reversed", title="Depth (m)")
+                fig2d.update_yaxes(autorange="reversed", title="Depth (m)")
+
+            # --- Apply colorbar ---
+            fig2d.update_layout(coloraxis_colorbar=colorbar,
+                                height=700, margin=dict(l=0, r=0, t=50, b=10))
             st.plotly_chart(fig2d, use_container_width=True)
-
-
-
-csv_buf = io.StringIO()
-base.to_csv(csv_buf, index=False)
-st.download_button(
-    "Download filtered CSV",
-    data=csv_buf.getvalue().encode("utf-8"),
-    file_name="drillhole_aggregated_filtered.csv",
-    mime="text/csv",
-    type="primary"
-)

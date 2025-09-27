@@ -35,13 +35,16 @@ class Params:
 # -----------------------
 _DH_FROM_CANDS = ("FROM", "FROMDEPTH", "DEPTH_FROM", "FROM_M")
 _DH_TO_CANDS   = ("TO", "TODEPTH", "DEPTH_TO", "TO_M")
-_VAL_CANDS     = ("VALUE", "Cu_ppm", "CU_PPM", "CU")
+_VAL_CANDS = ("VALUE",)
 
 def _first_existing(df: pd.DataFrame, cands: Iterable[str]) -> str | None:
     cols = {c.upper(): c for c in df.columns}
     for c in cands:
         if c in cols:
             return cols[c]
+    for col in df.columns:
+        if col.lower().endswith("_ppm"):
+            return col
     return None
 
 def _snap(v: np.ndarray, step: float) -> np.ndarray:
@@ -54,7 +57,7 @@ def _snap(v: np.ndarray, step: float) -> np.ndarray:
 # -----------------------
 def standardize_drillhole(df: pd.DataFrame, schema: dict) -> pd.DataFrame:
     """
-    Ensure LONGITUDE, LATITUDE, FROM, TO, CU_ORIG/VALUE-style exist.
+    Ensure LONGITUDE, LATITUDE, FROM, TO, VALUE_ORIG/VALUE-style exist.
     Keeps the original numeric columns; returns a new standardized frame.
     """
     df = standardize(df.copy(), schema)  # ensures LONGITUDE/LATITUDE/VALUE when possible
@@ -122,7 +125,7 @@ def align_drillhole_overlap(df_orig: pd.DataFrame,
     """
     Align ORIG and DL drillhole intervals by XY grid & depth overlap.
     Returns interval overlaps with columns:
-        LONGITUDE, LATITUDE, FROM, TO, CU_ORIG, CU_DL
+        LONGITUDE, LATITUDE, FROM, TO, VALUE_ORIG, VALUE_DL
     """
     # snap XY
     for d in (df_orig, df_dl):
@@ -142,17 +145,17 @@ def align_drillhole_overlap(df_orig: pd.DataFrame,
         for lo, hi, v_o, v_d in _overlap_rows_for_cell(a, b, pr.overlap_min_len_m):
             rows.append((lon, lat, lo, hi, v_o, v_d))
     if not rows:
-        return pd.DataFrame(columns=["LONGITUDE","LATITUDE","FROM","TO","CU_ORIG","CU_DL"])
+        return pd.DataFrame(columns=["LONGITUDE","LATITUDE","FROM","TO","VALUE_ORIG","VALUE_DL"])
 
     out = pd.DataFrame.from_records(
-        rows, columns=["LONGITUDE","LATITUDE","FROM","TO","CU_ORIG","CU_DL"]
+        rows, columns=["LONGITUDE","LATITUDE","FROM","TO","VALUE_ORIG","VALUE_DL"]
     )
     return out
 
 
 def _intervals_to_points(df_int: pd.DataFrame, z_step_m: float) -> pd.DataFrame:
     """
-    Turn intervals (FROM, TO, CU_*) to points at midpoints every z_step_m.
+    Turn intervals (FROM, TO, VALUE_*) to points at midpoints every z_step_m.
     If z_step_m <= 0, use single midpoint per interval.
     """
     if df_int.empty:
@@ -217,9 +220,9 @@ def split_drillhole_overlap_and_only(df_o: pd.DataFrame,
                                      pr: Params) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Produce three point tables for drillholes:
-        overlap_pts: LONGITUDE, LATITUDE, DEPTH, CU_ORIG, CU_DL, DIFF, DIFF_PCT
-        origonly_pts: LONGITUDE, LATITUDE, DEPTH, CU_ORIG
-        dlonly_pts:   LONGITUDE, LATITUDE, DEPTH, CU_DL
+        overlap_pts: LONGITUDE, LATITUDE, DEPTH, VALUE_ORIG, VALUE_DL, DIFF, DIFF_PCT
+        origonly_pts: LONGITUDE, LATITUDE, DEPTH, VALUE_ORIG
+        dlonly_pts:   LONGITUDE, LATITUDE, DEPTH, VALUE_DL
     """
     # 1) overlap intervals → points
     ovl_int = align_drillhole_overlap(df_o, df_d, pr)
@@ -254,8 +257,8 @@ def split_drillhole_overlap_and_only(df_o: pd.DataFrame,
     only_o_cells = cells_o.difference(cells_d)
     only_d_cells = cells_d.difference(cells_o)
 
-    origonly_pts = _midpoints(df_o[df_o[["LONGITUDE","LATITUDE"]].apply(tuple, axis=1).isin(only_o_cells)], "CU_ORIG")
-    dlonly_pts   = _midpoints(df_d[df_d[["LONGITUDE","LATITUDE"]].apply(tuple, axis=1).isin(only_d_cells)], "CU_DL")
+    origonly_pts = _midpoints(df_o[df_o[["LONGITUDE","LATITUDE"]].apply(tuple, axis=1).isin(only_o_cells)], "VALUE_ORIG")
+    dlonly_pts   = _midpoints(df_d[df_d[["LONGITUDE","LATITUDE"]].apply(tuple, axis=1).isin(only_d_cells)], "VALUE_DL")
 
     # Note: intervals that are in same XY cell but non-overlapping along depth are not counted as "only".
     # If you want to also include them, add logic here to subtract overlapped [FROM,TO] ranges from each side.
@@ -271,31 +274,31 @@ def split_surface_overlap_and_only(df_o: pd.DataFrame,
                                    pr: Params) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Produce three 2D tables for surface:
-        overlap_pts: LONGITUDE, LATITUDE, CU_ORIG, CU_DL, DIFF, DIFF_PCT (DEPTH=0)
-        origonly_pts: LONGITUDE, LATITUDE, CU_ORIG (DEPTH=0)
-        dlonly_pts:   LONGITUDE, LATITUDE, CU_DL   (DEPTH=0)
+        overlap_pts: LONGITUDE, LATITUDE, VALUE_ORIG, VALUE_DL, DIFF, DIFF_PCT (DEPTH=0)
+        origonly_pts: LONGITUDE, LATITUDE, VALUE_ORIG (DEPTH=0)
+        dlonly_pts:   LONGITUDE, LATITUDE, VALUE_DL   (DEPTH=0)
     Aggregation: mean per XY cell.
     """
     for d in (df_o, df_d):
         d["LONGITUDE"] = _snap(d["LONGITUDE"].to_numpy(), pr.grid_step_deg)
         d["LATITUDE"]  = _snap(d["LATITUDE"].to_numpy(),  pr.grid_step_deg)
 
-    agg_o = df_o.groupby(["LONGITUDE","LATITUDE"], as_index=False)["VALUE"].mean().rename(columns={"VALUE":"CU_ORIG"})
-    agg_d = df_d.groupby(["LONGITUDE","LATITUDE"], as_index=False)["VALUE"].mean().rename(columns={"VALUE":"CU_DL"})
+    agg_o = df_o.groupby(["LONGITUDE","LATITUDE"], as_index=False)["VALUE"].mean().rename(columns={"VALUE":"VALUE_ORIG"})
+    agg_d = df_d.groupby(["LONGITUDE","LATITUDE"], as_index=False)["VALUE"].mean().rename(columns={"VALUE":"VALUE_DL"})
 
     ovl = pd.merge(agg_o, agg_d, on=["LONGITUDE","LATITUDE"], how="inner")
     ovl["DEPTH"] = 0.0
     ovl = compute_diff_cols(ovl)
 
     only_o = pd.merge(agg_o, agg_d, on=["LONGITUDE","LATITUDE"], how="left", indicator=True)
-    only_o = only_o[only_o["_merge"] == "left_only"].drop(columns=["_merge"]).rename(columns={"CU_ORIG":"CU_ORIG"})
+    only_o = only_o[only_o["_merge"] == "left_only"].drop(columns=["_merge"]).rename(columns={"VALUE_ORIG":"VALUE_ORIG"})
     only_o["DEPTH"] = 0.0
 
     only_d = pd.merge(agg_d, agg_o, on=["LONGITUDE","LATITUDE"], how="left", indicator=True)
-    only_d = only_d[only_d["_merge"] == "left_only"].drop(columns=["_merge"]).rename(columns={"CU_DL":"CU_DL"})
+    only_d = only_d[only_d["_merge"] == "left_only"].drop(columns=["_merge"]).rename(columns={"VALUE_DL":"VALUE_DL"})
     only_d["DEPTH"] = 0.0
 
-    return ovl, only_o[["LONGITUDE","LATITUDE","DEPTH","CU_ORIG"]], only_d[["LONGITUDE","LATITUDE","DEPTH","CU_DL"]]
+    return ovl, only_o[["LONGITUDE","LATITUDE","DEPTH","VALUE_ORIG"]], only_d[["LONGITUDE","LATITUDE","DEPTH","VALUE_DL"]]
 
 
 # -----------------------
@@ -319,15 +322,16 @@ def recompute_drillhole(cfg: AppCfg, pr: Params | None = None) -> dict[str, Path
     out["dlonly"]   = (cfg.task2_diff_dir / "drillhole_points_dlonly.csv")
     out["all"]      = (cfg.task2_diff_dir / "drillhole_points_all.csv")
 
-    ovl[["LONGITUDE","LATITUDE","DEPTH","CU_ORIG","CU_DL","DIFF","DIFF_PCT"]].to_csv(out["overlap"], index=False)
+    ovl[["LONGITUDE","LATITUDE","DEPTH","VALUE_ORIG","VALUE_DL","DIFF","DIFF_PCT"]].to_csv(out["overlap"], index=False)
     only_o.to_csv(out["origonly"], index=False)
     only_d.to_csv(out["dlonly"], index=False)
 
     # all = union (keep available columns)
+
     all_tbl = pd.concat([
-        ovl[["LONGITUDE","LATITUDE","DEPTH","CU_ORIG","CU_DL","DIFF","DIFF_PCT"]],
-        only_o[["LONGITUDE","LATITUDE","DEPTH","CU_ORIG"]].assign(CU_DL=np.nan, DIFF=np.nan, DIFF_PCT=np.nan),
-        only_d[["LONGITUDE","LATITUDE","DEPTH","CU_DL"]].assign(CU_ORIG=np.nan, DIFF=np.nan, DIFF_PCT=np.nan),
+        ovl[["LONGITUDE","LATITUDE","DEPTH","VALUE_ORIG","VALUE_DL","DIFF","DIFF_PCT"]],
+        only_o[["LONGITUDE","LATITUDE","DEPTH","VALUE_ORIG"]].assign(VALUE_DL=np.nan, DIFF=np.nan, DIFF_PCT=np.nan),
+        only_d[["LONGITUDE","LATITUDE","DEPTH","VALUE_DL"]].assign(VALUE_ORIG=np.nan, DIFF=np.nan, DIFF_PCT=np.nan),
     ], ignore_index=True)
     all_tbl.to_csv(out["all"], index=False)
 
@@ -349,14 +353,14 @@ def recompute_surface(cfg: AppCfg, pr: Params | None = None) -> dict[str, Path]:
     out["dlonly"]   = (cfg.task2_diff_dir / "surface_points_dlonly.csv")
     out["all"]      = (cfg.task2_diff_dir / "surface_points_all.csv")
 
-    ovl[["LONGITUDE","LATITUDE","DEPTH","CU_ORIG","CU_DL","DIFF","DIFF_PCT"]].to_csv(out["overlap"], index=False)
+    ovl[["LONGITUDE","LATITUDE","DEPTH","VALUE_ORIG","VALUE_DL","DIFF","DIFF_PCT"]].to_csv(out["overlap"], index=False)
     only_o.to_csv(out["origonly"], index=False)
     only_d.to_csv(out["dlonly"], index=False)
 
     all_tbl = pd.concat([
-        ovl[["LONGITUDE","LATITUDE","DEPTH","CU_ORIG","CU_DL","DIFF","DIFF_PCT"]],
-        only_o[["LONGITUDE","LATITUDE","DEPTH","CU_ORIG"]].assign(CU_DL=np.nan, DIFF=np.nan, DIFF_PCT=np.nan),
-        only_d[["LONGITUDE","LATITUDE","DEPTH","CU_DL"]].assign(CU_ORIG=np.nan, DIFF=np.nan, DIFF_PCT=np.nan),
+        ovl[["LONGITUDE","LATITUDE","DEPTH","VALUE_ORIG","VALUE_DL","DIFF","DIFF_PCT"]],
+        only_o[["LONGITUDE","LATITUDE","DEPTH","VALUE_ORIG"]].assign(VALUE_DL=np.nan, DIFF=np.nan, DIFF_PCT=np.nan),
+        only_d[["LONGITUDE","LATITUDE","DEPTH","VALUE_DL"]].assign(VALUE_ORIG=np.nan, DIFF=np.nan, DIFF_PCT=np.nan),
     ], ignore_index=True)
     all_tbl.to_csv(out["all"], index=False)
 

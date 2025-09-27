@@ -49,14 +49,20 @@ st.markdown(
 )
 
 # ---------------- Hero ----------------
-st.markdown("# Analysis Hub")
 st.markdown(
-    "<div class='hub-subtle'>Explore differences between "
-    "<b>Original</b> and <b>Deep Learning</b> datasets. Choose a path below."
-    " You can always return to adjust <b>Global Grid</b> parameters for aggregated views.</div>",
+    """
+    <h1 style="margin-bottom:0; font-size:2.4rem;">
+      Analysis Hub
+    </h1>
+    <p style="font-size:1.05rem; color:#444; margin-top:0.5rem;">
+      Explore how <b>Deep Learning–imputed</b> assays diverge from <b>Original</b> samples.  
+      This hub gives you a <b>global difference summary</b> and lets you drill down into  
+      <b>Drillhole</b> or <b>Surface</b> datasets for detailed record-level or aggregated comparisons.  
+      Use the <b>Global Grid</b> settings below to configure how aggregated views are calculated.
+    </p>
+    """,
     unsafe_allow_html=True,
 )
-st.markdown("")
 
 # ---------------- Navigation cards ----------------
 st.markdown("### Choose a starting point", help="Pick by data domain and analysis granularity.")
@@ -66,26 +72,26 @@ st.markdown("<div class='hub-grid'>", unsafe_allow_html=True)
 # Drillhole card 
 with st.container(border=True):
     st.subheader("Drillhole analysis")
-    st.caption("Work with drillhole records directly, or switch to aggregated points/voxels for large-scale patterns.")
+    st.caption("Work with drillhole samples at fine resolution, or use voxel aggregation to observe medium/coarse patterns.")
     a, b = st.columns([1, 1])
     with a:
         st.page_link("pages/05_Drillhole_Record.py",
-                     label="Finer level · Record-level")
+                     label="Finer level · Record-level (samples)")
     with b:
         st.page_link("pages/06_Drillhole_Aggregated.py",
-                     label="Medium/Coarse · Aggregated (points/voxels)")
+                     label="Medium/Coarse · Aggregated (voxels)")
 
 # Surface card
 with st.container(border=True):
     st.subheader("Surface analysis")
-    st.caption("Work with surface grids—record-level or aggregated contours/grids.")
+    st.caption("Work with surface grid points at fine resolution, or aggregated grids/contours for broader patterns.")
     c1, c2 = st.columns([1, 1])
     with c1:
         st.page_link("pages/07_Surface_Record.py",
-                     label="Finer level · Record-level")
+                     label="Finer level · Record-level (grid points)")
     with c2:
         st.page_link("pages/08_Surface_Aggregated.py",
-                     label="Medium/Coarse · Aggregated (grid/contours)")
+                     label="Medium/Coarse · Aggregated (grids/contours)")
 
 st.markdown("</div>", unsafe_allow_html=True)  # end grid
 

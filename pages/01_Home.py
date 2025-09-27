@@ -36,6 +36,7 @@ def detect_element_from_cleaned(clean_dir: Path) -> str:
     return "Element"
 
 element = detect_element_from_cleaned(clean_dir)
+st.session_state["element"] = element
 
 # ----------------------------- HERO -----------------------------------------
 left, right = st.columns([0.78, 0.22])
@@ -136,3 +137,4 @@ with tabs[1]:
             file_name=f"{choice.replace(' ', '_').lower()}.csv",
             mime="text/csv",
         )
+

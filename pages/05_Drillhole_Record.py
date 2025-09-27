@@ -58,26 +58,36 @@ PATH_DH_ORIG = CLEAN_DIR / "drillhole_original_clean.csv"
 PATH_DH_DL   = CLEAN_DIR / "drillhole_dnn_clean.csv"
 
 # ------------------------- I/O & helpers ------------------------
-@st.cache_data
-def load_csv_safe(p: Path) -> pd.DataFrame:
+@st.cache_data(show_spinner=False)
+def load_csv_safe(p: Path, element: str = "Element") -> pd.DataFrame:
     if not p.exists():
         return pd.DataFrame()
     try:
         df = pd.read_csv(p)
-        for c in [
-            "LONGITUDE","LATITUDE","DEPTH",
-            "FROMDEPTH","TODEPTH",
-            "Cu_ppm","CU_ORIG","CU_DL"
-        ]:
+        # Always ensure numeric types for core coordinate/depth columns
+        base_cols = ["LONGITUDE", "LATITUDE", "DEPTH", "FROMDEPTH", "TODEPTH"]
+        for c in base_cols:
             if c in df.columns:
                 df[c] = pd.to_numeric(df[c], errors="coerce")
+
+        # Dynamically check for element-specific columns (e.g., Element_ppm, ELEMENT_ORIG, ELEMENT_DL)
+        element_cols = [
+            f"{element}_ppm",
+            f"{element.upper()}_ORIG",
+            f"{element.upper()}_DL",
+        ]
+        for c in element_cols:
+            if c in df.columns:
+                df[c] = pd.to_numeric(df[c], errors="coerce")
+
         return df
     except Exception:
         return pd.DataFrame()
 
 # ------------------------------ Data -----------------------------
-dh_orig = load_csv_safe(PATH_DH_ORIG)
-dh_dl   = load_csv_safe(PATH_DH_DL)
+element = st.session_state.get("element", "Element")
+dh_orig = load_csv_safe(PATH_DH_ORIG, element)
+dh_dl   = load_csv_safe(PATH_DH_DL, element)
 
 if dh_orig.empty and dh_dl.empty:
     st.warning(
@@ -91,12 +101,12 @@ c1, c2, c3 = st.columns([0.6, 0.2, 0.2])  # adjust proportions as needed
 
 with c1:
     st.markdown(
-        """
+        f"""
         <h1 style="margin-bottom:0.25rem; font-size:2.0rem;">
-        Record-level • Drillhole
+        Record-level • Drillhole ({element})
         </h1>
         <p style="color:#555; margin-top:0;">
-        Preview raw drillhole records within a small spatial window (points only).
+        Raw drillhole records previewed within a small spatial window (points only).
         </p>
         """,
         unsafe_allow_html=True,
@@ -165,26 +175,31 @@ if zcand:
     zmin, zmax = float(np.nanmin(zcand)), float(np.nanmax(zcand))
 else:
     zmin, zmax = 0.0, DEPTH_MAX
-depth_default = (zmin, zmax)
+
+zr = st.sidebar.slider("Depth", 0.0, DEPTH_MAX, (zmin, zmax))
 
 # ------------------------------ Filtering fn ---------------------
 def filter_window(df: pd.DataFrame) -> pd.DataFrame:
+    """Filter records based on longitude/latitude and depth sliders."""
     if df is None or df.empty:
         return pd.DataFrame()
     out = df.copy()
 
-    if {"LONGITUDE","LATITUDE"}.issubset(out.columns):
+    # Apply longitude/latitude filters
+    if {"LONGITUDE", "LATITUDE"}.issubset(out.columns):
         out = out[out["LONGITUDE"].between(*xr) & out["LATITUDE"].between(*yr)]
 
+    # Apply depth filters
     z0, z1 = float(zr[0]), float(zr[1])
     if "DEPTH" in out.columns:
         dep = pd.to_numeric(out["DEPTH"], errors="coerce")
         m = (dep >= 0) & (dep <= 2500.0) & dep.between(z0, z1)
         out = out[m]
-    elif {"FROMDEPTH","TODEPTH"}.issubset(out.columns):
+    elif {"FROMDEPTH", "TODEPTH"}.issubset(out.columns):
         f = pd.to_numeric(out["FROMDEPTH"], errors="coerce")
-        t = pd.to_numeric(out["TODEPTH"],   errors="coerce")
-        m = (t >= 0) & (f <= 2500.0) & (t >= z0) & (f <= z1)
+        t = pd.to_numeric(out["TODEPTH"], errors="coerce")
+        # keep intervals within [0,2500] that overlap [z0,z1]
+        m = (t >= 0) & (t <= 2500.0) & (t >= z0) & (f <= z1)
         out = out[m]
 
     return out
@@ -193,7 +208,6 @@ full_o = filter_window(dh_orig) if show_orig else pd.DataFrame()
 full_d = filter_window(dh_dl)   if show_dl   else pd.DataFrame()
 
 # ------------------------------ 3D preview (tabs) ------------------------------
-
 def make_figure_v1() -> go.Figure:
     fig = go.Figure()
 
@@ -210,12 +224,14 @@ def make_figure_v1() -> go.Figure:
         else:
             z = pd.Series(np.nan, index=df.index)
 
-        # choose a CU column (only for hover)
-        if   "Cu_ppm"  in df.columns: cu_col = "Cu_ppm"
-        elif "CU_ORIG" in df.columns: cu_col = "CU_ORIG"
-        elif "CU_DL"   in df.columns: cu_col = "CU_DL"
-        else:                         cu_col = None
-        cu_vals = pd.to_numeric(df[cu_col], errors="coerce") if cu_col else pd.Series(np.nan, index=df.index)
+        # pick element column dynamically for hover (ppm, ORIG, DL)
+        element_cols = [
+            f"{element}_ppm",
+            f"{element.upper()}_ORIG",
+            f"{element.upper()}_DL"
+        ]
+        val_col = next((c for c in element_cols if c in df.columns), None)
+        val_vals = pd.to_numeric(df[val_col], errors="coerce") if val_col else pd.Series(np.nan, index=df.index)
 
         # pack hover fields into customdata
         cd = pd.DataFrame({
@@ -226,7 +242,7 @@ def make_figure_v1() -> go.Figure:
             "stype":     df["SAMPLETYPE"] if "SAMPLETYPE" in df.columns else pd.Series([None]*len(df), index=df.index),
             "from":      pd.to_numeric(df["FROMDEPTH"], errors="coerce") if "FROMDEPTH" in df.columns else pd.Series([np.nan]*len(df), index=df.index),
             "to":        pd.to_numeric(df["TODEPTH"],   errors="coerce") if "TODEPTH"   in df.columns else pd.Series([np.nan]*len(df), index=df.index),
-            "cu":        cu_vals,
+            "val":       val_vals,
             "depth_mid": z,
         }).to_numpy()
 
@@ -236,7 +252,7 @@ def make_figure_v1() -> go.Figure:
             "Lon=%{customdata[2]:.5f} · Lat=%{customdata[3]:.5f}<br>"
             "SampleType=%{customdata[4]}<br>"
             "From=%{customdata[5]:.2f} · To=%{customdata[6]:.2f}<br>"
-            "Cu=%{customdata[7]:.3f}<br>"
+            f"{element}=%{{customdata[7]:.3f}}<br>"
             "Depth_mid=%{customdata[8]:.2f}"
             "<extra></extra>"
         )
@@ -244,19 +260,18 @@ def make_figure_v1() -> go.Figure:
         fig.add_trace(go.Scatter3d(
             x=df["LONGITUDE"], y=df["LATITUDE"], z=z,
             mode="markers",
-            # match 06: use the same point size var and ~0.85 opacity
             marker=dict(size=pt_size, opacity=0.85, color=color),
-            name=tag,  # legend label
+            name=tag,
             customdata=cd,
             hovertemplate=hover_tmpl,
             showlegend=True,
         ))
 
-    # colors keep Plotly's default blue/red which also match 06 for 2 classes
+    # Add Original & DL points
     if not full_o.empty: add_points(full_o, "Original", "#447dd2")
     if not full_d.empty: add_points(full_d, "DL",       "#ff554b")
 
-    # layout aligned with 06 page: reversed Z, same height/margins and legend style
+    # Layout config
     fig.update_layout(
         scene=dict(
             xaxis=dict(title="Longitude"),
@@ -268,10 +283,9 @@ def make_figure_v1() -> go.Figure:
         legend=dict(
             title="SOURCE",
             orientation="v",
-            # put legend on the right, outside plotting area (same feel as 06)
             xanchor="left", x=1.02, yanchor="top", y=1.0,
-            font=dict(size=18),          # <-- match 06
-            itemsizing="constant",       # <-- match 06
+            font=dict(size=18),
+            itemsizing="constant",
         ),
     )
     return fig
@@ -279,8 +293,8 @@ def make_figure_v1() -> go.Figure:
 def make_figure_v2() -> go.Figure:
     """
     V2: value-colored view
-    - Merge ORIG + DL; color and (slightly) size the points by Cu value.
-    - Cu column priority: Cu_ppm > CU_DL > CU_ORIG.
+    - Merge ORIG + DL; color the points by element value.
+    - Element column priority: {element}_ppm > {element}_DL > {element}_ORIG.
     - Percentile clipping (98th) for stable colorbar/size scaling.
     """
     both = pd.concat([full_o.assign(_src="ORIG"), full_d.assign(_src="DL")], ignore_index=True)
@@ -288,11 +302,14 @@ def make_figure_v2() -> go.Figure:
     if both.empty:
         return fig
 
-    # choose Cu value column
-    if   "Cu_ppm"  in both.columns: cu_col = "Cu_ppm"
-    elif "CU_DL"   in both.columns: cu_col = "CU_DL"
-    elif "CU_ORIG" in both.columns: cu_col = "CU_ORIG"
-    else:
+    # choose element value column
+    element_cols = [
+        f"{element}_ppm",
+        f"{element.upper()}_DL",
+        f"{element.upper()}_ORIG",
+    ]
+    val_col = next((c for c in element_cols if c in both.columns), None)
+    if not val_col:
         return fig  # nothing to color by
 
     # depth (z)
@@ -304,9 +321,11 @@ def make_figure_v2() -> go.Figure:
     else:
         z = pd.Series(np.nan, index=both.index)
 
-    v = pd.to_numeric(both[cu_col], errors="coerce")
+    # values for coloring
+    v = pd.to_numeric(both[val_col], errors="coerce")
     vmax = float(np.nanpercentile(v, 98)) if np.isfinite(v).any() else 1.0
-    if vmax <= 0: vmax = 1.0
+    if vmax <= 0:
+        vmax = 1.0
     v_clip = v.clip(lower=0, upper=vmax)
 
     fig.add_trace(go.Scatter3d(
@@ -317,12 +336,12 @@ def make_figure_v2() -> go.Figure:
             color=v_clip,
             colorscale="Turbo",
             cmin=0, cmax=vmax,
-            colorbar=dict(title=cu_col),
+            colorbar=dict(title=element),
             opacity=0.9,
         ),
-        name="Cu-valued points",
+        name=f"{element}-valued points",
         hovertemplate=(
-            f"Cu ({cu_col})=%{{marker.color:.3f}}<br>"
+            f"{element} (%{{marker.color:.3f}})<br>"
             "Lon=%{x:.5f} · Lat=%{y:.5f}<br>"
             "Depth=%{z:.2f}<extra></extra>"
         ),
@@ -357,7 +376,7 @@ else:
 
     with tab2:
         st.caption(
-            f"Colored by Cu value · Plotted: **{len(full_o) + len(full_d):,}** "
+            f"Colored by {element} value · Plotted: **{len(full_o) + len(full_d):,}** "
             f"(ORIG: {len(full_o):,} • DL: {len(full_d):,})"
         )
         st.plotly_chart(fig_v2, use_container_width=True)

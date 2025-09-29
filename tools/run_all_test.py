@@ -228,11 +228,28 @@ def _convert_shp_zip_to_csv_zip(shp_zip: Path, data_dir: Path) -> Path:
             _unpack_zip(src_zip_for_read, tmp)
 
             # -------------- Find and convert all .shp
-            shp_files = _find_shp_files(tmp)
+            shp_files_all = _find_shp_files(tmp)
+
+            # Drop entries inside "__MACOSX" and AppleDouble companions starting with "._"
+            # This works across Windows/macOS/Linux paths.
+            def _is_macos_junk(p: Path) -> bool:
+                return p.name.startswith("._") or ("__MACOSX" in p.parts)
+
+            filtered = [p for p in shp_files_all if not _is_macos_junk(p)]
+
+            # (Optional but recommended) keep only complete shapefile trios: .shp + .dbf + .shx
+            def _is_complete_shapefile(p: Path) -> bool:
+                return p.with_suffix(".dbf").exists() and p.with_suffix(".shx").exists()
+
+            shp_files = [p for p in filtered if _is_complete_shapefile(p)]
+
+            skipped = len(shp_files_all) - len(shp_files)
             if not shp_files:
-                raise RuntimeError("No .shp files found in the provided ZIP.")
+                raise RuntimeError("No valid .shp files found in the ZIP after filtering macOS metadata and incomplete sets.")
+            if skipped > 0:
+                warnings.warn(f"[INFO] Skipped {skipped} macOS metadata/partial entries (.__/.__MACOSX/._*).")
             if len(shp_files) != 4:
-                warnings.warn(f"[WARN] Found {len(shp_files)} .shp files (expected 4). Converting all found.")
+                warnings.warn(f"[WARN] Found {len(shp_files)} real .shp files (expected 4). Converting all found.")
 
             staged = data_dir / f"staged_{shp_zip.stem}"
             staged.mkdir(parents=True, exist_ok=True)

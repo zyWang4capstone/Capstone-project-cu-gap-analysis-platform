@@ -10,6 +10,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 from _ui_common import inject_theme
+from cap_common.config import load_cfg
 
 st.set_page_config(layout="wide", page_title="Record-level • Surface")
 inject_theme()
@@ -40,8 +41,42 @@ st.markdown(
 
 # ---------------------------- Paths ----------------------------
 CLEAN_DIR = Path("reports/task1/cleaned")
-PATH_SURF_ORIG = CLEAN_DIR / "surface_original_clean.csv"
-PATH_SURF_DL   = CLEAN_DIR / "surface_dnn_clean.csv"
+
+def _resolve_surface_clean_paths():
+    """
+    Resolve cleaned surface CSVs with flexible naming patterns.
+    Returns: (orig_path or None, dl_path or None)
+    """
+    def pick_one(patterns):
+        for pat in patterns:
+            hits = sorted(CLEAN_DIR.glob(pat))
+            if hits:
+                return hits[0]
+        return None
+
+    # Try flexible patterns first (supporting surf/surface + orig/original + dl/dnn)
+    p_orig = pick_one([
+        "*surface*orig*clean*.csv",
+        "*surf*orig*clean*.csv",
+        "*surface*original*clean*.csv",
+        "*surf*original*clean*.csv",
+    ])
+    p_dl = pick_one([
+        "*surface*dnn*clean*.csv",
+        "*surf*dnn*clean*.csv",
+        "*surface*dl*clean*.csv",
+        "*surf*dl*clean*.csv",
+    ])
+
+    # Legacy hard-coded names as the last resort (back-compat)
+    if p_orig is None and (CLEAN_DIR / "surface_original_clean.csv").exists():
+        p_orig = CLEAN_DIR / "surface_original_clean.csv"
+    if p_dl is None and (CLEAN_DIR / "surface_dnn_clean.csv").exists():
+        p_dl = CLEAN_DIR / "surface_dnn_clean.csv"
+
+    return p_orig, p_dl
+
+PATH_SURF_ORIG, PATH_SURF_DL = _resolve_surface_clean_paths()
 
 # ------------------------- I/O & helpers ------------------------
 @st.cache_data
@@ -141,11 +176,77 @@ def fix_extent_mapbox(fig, xr, yr, style="open-street-map", height: int = 800):
 
 # Data existence check
 if surf_orig.empty and surf_dl.empty:
-    st.warning(
-        "No cleaned surface files found under `reports/task1/cleaned/`.\n"
-        "Expected: `surface_original_clean.csv` and/or `surface_dnn_clean.csv`."
-    )
-    st.stop()
+
+    def _read_points_all_fallback() -> pd.DataFrame:
+        """
+        Try reading points_all from (a) cfg.original_points_all, then (b) default locations.
+        Return empty DataFrame if not found/readable.
+        """
+        # 1) Candidate paths from cfg if available
+        try:
+            cfg = load_cfg()
+        except Exception:
+            cfg = None
+
+        candidates = []
+        if cfg and getattr(cfg, "original_points_all", None):
+            base = Path(cfg.original_points_all)
+            candidates += [base.with_suffix(".parquet"), base.with_suffix(".csv")]
+
+        # 2) Default locations under reports/task1/original/
+        base2 = Path("reports/task1/original/points_all")
+        candidates += [base2.with_suffix(".parquet"), base2.with_suffix(".csv")]
+
+        # 3) Historical aliases (optional)
+        candidates += [
+            Path("reports/task1/original/all_points.parquet"),
+            Path("reports/task1/original/all_points.csv"),
+        ]
+
+        # Read the first existing file
+        for p in candidates:
+            if p.exists():
+                try:
+                    return pd.read_parquet(p) if p.suffix == ".parquet" else pd.read_csv(p)
+                except Exception:
+                    # try next candidate if read failed
+                    continue
+        return pd.DataFrame()
+
+    df_all = _read_points_all_fallback()
+
+    if not df_all.empty:
+        # Standardize schema: uppercase + coord rename + numeric coercion
+        df_all = df_all.rename(columns=str.upper)
+        df_all = df_all.rename(columns={"DLAT": "LATITUDE", "DLONG": "LONGITUDE"})
+        for c in ("LONGITUDE", "LATITUDE", "VALUE"):
+            if c in df_all.columns:
+                df_all[c] = pd.to_numeric(df_all[c], errors="coerce")
+
+        # Split by SOURCE into ORIG/DL (support SURF_* and SF_* variants)
+        src = df_all.get("SOURCE", pd.Series(dtype=str)).astype(str).str.upper().str.replace("-", "_")
+        so = df_all[src.isin(["SURF_ORIG", "SF_ORIG"])].copy()
+        sd = df_all[src.isin(["SURF_DL", "SF_DL"])].copy()
+
+        # Build element-specific columns expected by the page:
+        # - ORIG side gets both {element}_ppm and {ELEMENT}_ORIG
+        # - DL   side gets {ELEMENT}_DL
+        if not so.empty:
+            so[f"{element}_ppm"] = pd.to_numeric(so.get("VALUE"), errors="coerce")
+            so[f"{element.upper()}_ORIG"] = so[f"{element}_ppm"]
+            surf_orig = so
+        if not sd.empty:
+            sd[f"{element.upper()}_DL"] = pd.to_numeric(sd.get("VALUE"), errors="coerce")
+            surf_dl = sd
+
+    # Still nothin? Show a clear message and stop.
+    if surf_orig.empty and surf_dl.empty:
+        st.warning(
+            "No surface data found.\n"
+            "Tried flexible names under `reports/task1/cleaned/` and a fallback to "
+            "`points_all` under `reports/task1/original/`."
+        )
+        st.stop()
 
 # ------------------------------ Header ---------------------------
 element = st.session_state.get("element", "Element")

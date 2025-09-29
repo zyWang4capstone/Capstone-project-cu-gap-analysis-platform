@@ -228,6 +228,7 @@ def _convert_shp_zip_to_csv_zip(shp_zip: Path, data_dir: Path) -> Path:
             _unpack_zip(src_zip_for_read, tmp)
 
             # -------------- Find and convert all .shp
+
             shp_files_all = _find_shp_files(tmp)
 
             # Drop entries inside "__MACOSX" and AppleDouble companions starting with "._"
@@ -250,6 +251,13 @@ def _convert_shp_zip_to_csv_zip(shp_zip: Path, data_dir: Path) -> Path:
                 warnings.warn(f"[INFO] Skipped {skipped} macOS metadata/partial entries (.__/.__MACOSX/._*).")
             if len(shp_files) != 4:
                 warnings.warn(f"[WARN] Found {len(shp_files)} real .shp files (expected 4). Converting all found.")
+
+            shp_files = _find_shp_files(tmp)
+            if not shp_files:
+                raise RuntimeError("No .shp files found in the provided ZIP.")
+            if len(shp_files) != 4:
+                warnings.warn(f"[WARN] Found {len(shp_files)} .shp files (expected 4). Converting all found.")
+
 
             staged = data_dir / f"staged_{shp_zip.stem}"
             staged.mkdir(parents=True, exist_ok=True)

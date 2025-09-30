@@ -70,9 +70,9 @@ def load_csv_safe(p: Path, element: str = "Element") -> pd.DataFrame:
             if c in df.columns:
                 df[c] = pd.to_numeric(df[c], errors="coerce")
 
-        # Dynamically check for element-specific columns (e.g., Element_ppm, ELEMENT_ORIG, ELEMENT_DL)
+        # Dynamically check for element-specific columns (e.g., Element_PPM, ELEMENT_ORIG, ELEMENT_DL)
         element_cols = [
-            f"{element}_ppm",
+            f"{element.upper()}_PPM",
             f"{element.upper()}_ORIG",
             f"{element.upper()}_DL",
         ]
@@ -224,9 +224,9 @@ def make_figure_v1() -> go.Figure:
         else:
             z = pd.Series(np.nan, index=df.index)
 
-        # pick element column dynamically for hover (ppm, ORIG, DL)
+        # pick element column dynamically for hover (PPM, ORIG, DL)
         element_cols = [
-            f"{element}_ppm",
+            f"{element.upper()}_PPM",
             f"{element.upper()}_ORIG",
             f"{element.upper()}_DL"
         ]
@@ -294,7 +294,7 @@ def make_figure_v2() -> go.Figure:
     """
     V2: value-colored view
     - Merge ORIG + DL; color the points by element value.
-    - Element column priority: {element}_ppm > {element}_DL > {element}_ORIG.
+    - Element column priority: {element}_PPM > {element}_DL > {element}_ORIG.
     - Percentile clipping (98th) for stable colorbar/size scaling.
     """
     both = pd.concat([full_o.assign(_src="ORIG"), full_d.assign(_src="DL")], ignore_index=True)
@@ -304,7 +304,7 @@ def make_figure_v2() -> go.Figure:
 
     # choose element value column
     element_cols = [
-        f"{element}_ppm",
+        f"{element.upper()}_PPM",
         f"{element.upper()}_DL",
         f"{element.upper()}_ORIG",
     ]
@@ -389,7 +389,8 @@ def keep_cols(df: pd.DataFrame, tag: str) -> pd.DataFrame:
     out["_LAYER"] = tag
     keep = [c for c in [
         "SAMPLEID","LONGITUDE","LATITUDE","DEPTH","FROMDEPTH","TODEPTH",
-        "Cu_ppm","CU_ORIG","CU_DL","SAMPLETYPE","COLLARID"
+        f"{element.upper()}_PPM", f"{element.upper()}_ORIG", f"{element.upper()}_DL",
+        "SAMPLETYPE","COLLARID"
     ] if c in out.columns] + ["_LAYER"]
     return out[keep]
 

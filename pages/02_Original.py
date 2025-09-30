@@ -1,5 +1,3 @@
-
-
 import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parents[2] / "src"))
@@ -18,7 +16,71 @@ import streamlit as st
 from cap_common.config import load_cfg
 from cap_original.points import build_points_views
 
+from _ui_common import inject_theme
 
+st.set_page_config(layout="wide", page_title="Original Dataset")
+inject_theme()
+
+# ---------- Tab/heading CSS (same as 05/06/07/09) ----------
+st.markdown(
+    """
+    <style>
+    .stTabs [data-baseweb="tab"] {
+        background: #f8fafc !important;
+        color: #111827 !important;
+        border: 1px solid #e5e7eb !important;
+        border-bottom: none !important;
+        border-radius: 10px 10px 0 0 !important;
+        padding: 0.45rem 1rem !important;
+        margin-right: 6px !important;
+        font-size: 1.05rem !important;
+        font-weight: 500 !important;
+        box-shadow: none !important;
+        outline: none !important;
+    }
+    .stTabs [data-baseweb="tab"] * { color: inherit !important; }
+    .stTabs [data-baseweb="tab"][aria-selected="true"] {
+        background: #111827 !important;
+        color: #ffffff !important;
+        font-size: 1.15rem !important;
+        font-weight: 700 !important;
+        border-color: #111827 !important;
+        transform: translateY(1px);
+    }
+    .stTabs [data-baseweb="tab-highlight"] { background: transparent !important; }
+    .stTabs + div [data-testid="stVerticalBlock"] > div:first-child {
+        border-top: 1px solid #11182710; margin-top: -1px;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+# ------------------------------ Header -----------------------------
+c1, c2, c3 = st.columns([0.6, 0.2, 0.2])
+
+element = st.session_state.get("element", "Element")
+# ------------------------------ Header -----------------------------
+c1, c2, c3 = st.columns([0.6, 0.2, 0.2])
+
+with c1:
+    st.markdown(
+        f"""
+        <h1 style="margin-bottom:0.25rem; font-size:2.0rem;">
+        Dataset Overview • Original ({element})
+        </h1>
+        <p style="color:#555; margin-top:0;">
+        Overview of drillhole and surface datasets (Original and DL versions).
+        </p>
+        """,
+        unsafe_allow_html=True,
+    )
+
+with c2:
+    st.page_link("pages/01_Home.py", label="Back to Home")
+
+with c3:
+    st.page_link("pages/04_Diff_Home.py", label="View Diff • Home")
 
 # ---- Load data (CSV/Parquet → fallback build) ----
 
@@ -150,29 +212,18 @@ def estimate_delta(arr):
     s = np.sort(arr); d = np.diff(s); d = d[d > 0]
     return float(np.nanmedian(d)) if len(d) else 1.0
 
-# ---------- Sidebar: data source ----------
-st.sidebar.header("Data source")
-path_text = st.sidebar.text_input("points_all.csv path (optional)", "")
-file = st.sidebar.file_uploader("...or upload points_all.csv", type=["csv"])
-
+# ---------- Data source ----------
 resolved_path = None
-if file is not None:
-    tmp = Path(st.session_state.get("_uploaded_points_all", "uploaded_points_all.csv"))
-    tmp.write_bytes(file.getbuffer())
-    resolved_path = tmp
-elif path_text.strip():
-    resolved_path = Path(path_text.strip())
-else:
-    for p in PATH_CANDIDATES:
-        if p.exists():
-            resolved_path = p; break
+for p in PATH_CANDIDATES:
+    if p.exists():
+        resolved_path = p
+        break
 
 if not resolved_path or not Path(resolved_path).exists():
-    st.warning("No points_all.csv found. Provide a path or upload the file.")
+    st.error("No points_all.csv found. Please check PATH_CANDIDATES.")
     st.stop()
 
-df = load_points_all(Path(resolved_path))
-st.sidebar.success(f"Loaded {len(df):,} rows from: {resolved_path}")
+df = load_points_all(resolved_path)
 
 # ---------- Dataset selection ----------
 st.sidebar.header("Dataset(s)")
@@ -229,61 +280,36 @@ pctl = st.sidebar.slider("Percentile (for clip)", 80.0, 99.9, 99.0, 0.1)
 abs_max = st.sidebar.number_input("Max value (Absolute clip)", min_value=1.0, value=500.0, step=10.0)
 use_log_color = st.sidebar.checkbox("Use log10(value) for color only", value=True)
 
-st.sidebar.header("View mode")
-view_mode = st.sidebar.radio("Mode", ["Voxel", "Points", "Map (XY slice)", "Section"],
-                             horizontal=True, index=1)   # default = Points
-
 # ---------- Points params ----------
 st.sidebar.subheader("Points params")
 max_points = st.sidebar.number_input("Max points to plot (per dataset)",
                                      min_value=1_000, value=30_000, step=5_000)
 point_size = st.sidebar.slider("Point size", 1, 8, 3)
 
-# ---------- Voxel params ----------
-st.sidebar.subheader("Voxel params")
+# # ---------- Voxel params ----------
+# st.sidebar.subheader("Voxel params")
 
 
-mid_lat = 0.5 * (lat_rng[0] + lat_rng[1])
-lon_m_per_deg = 111000.0 * max(np.cos(np.deg2rad(mid_lat)), 1e-6)
-lat_m_per_deg = 111000.0
-dx_deg = 10.0 / lon_m_per_deg   # 10 m in degrees (lon)
-dy_deg = 10.0 / lat_m_per_deg   # 10 m in degrees (lat)
-dz_m  = 1.0                     # 1 m (depth)
-span_x_deg = max(lon_rng[1] - lon_rng[0], dx_deg)
-span_y_deg = max(lat_rng[1] - lat_rng[0], dy_deg)
-span_z_m   = max(dep_rng[1] - dep_rng[0], dz_m)
-auto_nx = int(np.clip(round(span_x_deg / dx_deg), 5, 120))
-auto_ny = int(np.clip(round(span_y_deg / dy_deg), 5, 120))
-auto_nz = int(np.clip(round(span_z_m   / dz_m ), 5, 120))
+# mid_lat = 0.5 * (lat_rng[0] + lat_rng[1])
+# lon_m_per_deg = 111000.0 * max(np.cos(np.deg2rad(mid_lat)), 1e-6)
+# lat_m_per_deg = 111000.0
+# dx_deg = 10.0 / lon_m_per_deg   # 10 m in degrees (lon)
+# dy_deg = 10.0 / lat_m_per_deg   # 10 m in degrees (lat)
+# dz_m  = 1.0                     # 1 m (depth)
+# span_x_deg = max(lon_rng[1] - lon_rng[0], dx_deg)
+# span_y_deg = max(lat_rng[1] - lat_rng[0], dy_deg)
+# span_z_m   = max(dep_rng[1] - dep_rng[0], dz_m)
+# auto_nx = int(np.clip(round(span_x_deg / dx_deg), 5, 120))
+# auto_ny = int(np.clip(round(span_y_deg / dy_deg), 5, 120))
+# auto_nz = int(np.clip(round(span_z_m   / dz_m ), 5, 120))
 
 
-nx = st.sidebar.slider("nx", 5, 120, auto_nx)
-ny = st.sidebar.slider("ny", 5, 120, auto_ny)
-nz = st.sidebar.slider("nz", 5, 120, auto_nz)
-min_count = st.sidebar.number_input("Min samples per voxel", min_value=1, value=3, step=1)  
-vox_style = st.sidebar.selectbox("Style", ["Cubes (mesh3d)", "Dots (centers)"], index=0)
-max_cubes = st.sidebar.number_input("Max cubes (total)", min_value=500, value=3000, step=500)
-
-# ---------- Map params ----------
-st.sidebar.subheader("Map slice params")
-map_depth_window = st.sidebar.slider("Depth window", float(dep_min), float(dep_max),
-                                     (float(dep_min), float(dep_max)), key="map_depth_win")
-map_grid_km = st.sidebar.number_input(
-    "Grid size (km)", min_value=0.01, value=0.01, step=0.01, key="map_grid_km"
-)
-map_agg = st.sidebar.selectbox("Aggregation", ["mean", "median", "max", "absmax"], index=0, key="map_agg")
-map_layer = st.sidebar.selectbox("Layer", ["scatter", "density"], index=0, key="map_layer")
-
-# ---------- Section (horizontal depth slice only) ----------
-st.sidebar.subheader("Section — horizontal depth slice")
-sec_depth_m = st.sidebar.number_input("Depth (meters, same as DEPTH)", value=float(np.nanmedian(df["DEPTH"])), step=1.0, key="sec_depth_m")
-sec_half_m  = st.sidebar.number_input("Half window (meters)", min_value=0.0, value=5.0, step=1.0, key="sec_half_m")
-sec_grid_km = st.sidebar.number_input(
-    "XY grid size (km)", min_value=0.1, value=0.5, step=0.05, key="sec_grid_km"
-)
-sec_agg     = st.sidebar.selectbox("Aggregation (slice)", ["mean", "median", "max", "absmax"], index=0, key="sec_agg")
-sec_min_cnt = st.sidebar.number_input("Min samples per cell (slice)", min_value=1, value=3, step=1, key="sec_min_cnt")
-sec_topdown  = st.sidebar.checkbox("Top-down orthographic view", value=True, key="sec_topdown")
+# nx = st.sidebar.slider("nx", 5, 120, auto_nx)
+# ny = st.sidebar.slider("ny", 5, 120, auto_ny)
+# nz = st.sidebar.slider("nz", 5, 120, auto_nz)
+# min_count = st.sidebar.number_input("Min samples per voxel", min_value=1, value=3, step=1)  
+# vox_style = st.sidebar.selectbox("Style", ["Cubes (mesh3d)", "Dots (centers)"], index=0)
+# max_cubes = st.sidebar.number_input("Max cubes (total)", min_value=500, value=3000, step=500)
 
 # ---------- Filter once ----------
 df = apply_spatial_filter(df[df["SOURCE"].isin(chosen)], lon_rng, lat_rng, dep_rng)
@@ -294,7 +320,10 @@ cs = pick_seq_scale(palette)
 is_surface = lambda name: str(name).upper().startswith("SURF")
 
 # ---------- Rendering ----------
-if view_mode == "Points":
+tab1, tab2, tab3, tab4 = st.tabs(["Points", "Voxel", "Map (XY slice)", "Section"])
+
+# --- Points ---
+with tab1:
     traces = []
     if clip_mode == "Percentile":
         vmax_all = float(np.nanpercentile(df["VALUE"], pctl)) if len(df) else 1.0
@@ -302,6 +331,7 @@ if view_mode == "Points":
         vmin_all, vmax_all = 0.0, vmax_all
     else:
         vmin_all, vmax_all = 0.0, float(abs_max)
+
     for s in chosen:
         sub = df[df["SOURCE"] == s].copy()
         if len(sub) > max_points:  # random sample only if exceeding the cap
@@ -326,7 +356,37 @@ if view_mode == "Points":
         fig.update_layout(showlegend=False)
     st.plotly_chart(fig, use_container_width=True)
 
-elif view_mode == "Voxel":
+# --- Voxel ---
+with tab2:
+    mid_lat = 0.5 * (lat_rng[0] + lat_rng[1])
+    lon_m_per_deg = 111000.0 * max(np.cos(np.deg2rad(mid_lat)), 1e-6)
+    lat_m_per_deg = 111000.0
+    dx_deg = 10.0 / lon_m_per_deg   # 10 m in degrees (lon)
+    dy_deg = 10.0 / lat_m_per_deg   # 10 m in degrees (lat)
+    dz_m  = 1.0                     # 1 m (depth)
+    span_x_deg = max(lon_rng[1] - lon_rng[0], dx_deg)
+    span_y_deg = max(lat_rng[1] - lat_rng[0], dy_deg)
+    span_z_m   = max(dep_rng[1] - dep_rng[0], dz_m)
+    auto_nx = int(np.clip(round(span_x_deg / dx_deg), 5, 120))
+    auto_ny = int(np.clip(round(span_y_deg / dy_deg), 5, 120))
+    auto_nz = int(np.clip(round(span_z_m   / dz_m ), 5, 120))
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        nx = st.slider("nx", 5, 120, auto_nx)
+    with c2:
+        ny = st.slider("ny", 5, 120, auto_ny)
+    with c3:
+        nz = st.slider("nz", 5, 120, auto_nz)
+        
+    c4, c5, c6 = st.columns(3)
+    with c4:
+        min_count = st.number_input("Min samples/voxel", min_value=1, value=3, step=1)
+    with c5:
+        vox_style = st.selectbox("Style", ["Cubes (mesh3d)", "Dots (centers)"], index=0)
+    with c6:
+        max_cubes = st.number_input("Max cubes", min_value=500, value=3000, step=500)
+
     if clip_mode == "Percentile":
         vmax_all = float(np.nanpercentile(df["VALUE"], pctl)) if len(df) else 1.0
         vmax_all = 1.0 if (not np.isfinite(vmax_all) or vmax_all <= 0) else vmax_all
@@ -361,7 +421,110 @@ elif view_mode == "Voxel":
             fig.update_layout(showlegend=False)
         st.plotly_chart(fig, use_container_width=True)
 
-elif view_mode == "Section":
+# --- Map ---
+with tab3:
+
+    c1, c2, c3, c4 = st.columns([1, 1, 1, 1]) 
+    with c1:
+        map_depth_window = st.slider(
+            "Depth window",
+            float(dep_min), float(dep_max),
+            (float(dep_min), float(dep_max)),
+            key="map_depth_win"
+        )
+    with c2:
+        map_grid_km = st.number_input(
+            "Grid size (km)", min_value=0.01, value=0.01, step=0.01, key="map_grid_km"
+        )
+    with c3:
+        map_agg = st.selectbox(
+            "Aggregation", ["mean", "median", "max", "absmax"], index=0, key="map_agg"
+        )
+    with c4:
+        map_layer = st.selectbox(
+            "Layer", ["scatter", "density"], index=0, key="map_layer"
+        )
+
+    d0, d1 = map_depth_window
+    mid_lat = 0.5 * (lat_rng[0] + lat_rng[1])
+    lon_deg = (map_grid_km * 1000.0) / (111000.0 * max(np.cos(np.deg2rad(mid_lat)), 1e-6))
+    lat_deg = (map_grid_km * 1000.0) / 111000.0
+    all_vals = []
+    for s in chosen:
+        sub = df[(df["SOURCE"] == s) & (df["DEPTH"] >= d0) & (df["DEPTH"] <= d1)].copy()
+        if sub.empty: continue
+        gx = np.floor(sub["LONGITUDE"] / lon_deg) * lon_deg
+        gy = np.floor(sub["LATITUDE"]  / lat_deg) * lat_deg
+        sub["_gx"] = gx; sub["_gy"] = gy
+        if map_agg == "absmax":
+            grp = sub.groupby(["_gx", "_gy"])["VALUE"].agg(lambda a: a.iloc[np.argmax(np.abs(a))])
+        elif map_agg == "median":
+            grp = sub.groupby(["_gx", "_gy"])["VALUE"].median()
+        elif map_agg == "max":
+            grp = sub.groupby(["_gx", "_gy"])["VALUE"].max()
+        else:
+            grp = sub.groupby(["_gx", "_gy"])["VALUE"].mean()
+        cnt = sub.groupby(["_gx", "_gy"])["VALUE"].size()
+        agg = pd.DataFrame({
+            "LONGITUDE": grp.index.get_level_values(0),
+            "LATITUDE":  grp.index.get_level_values(1),
+            "val": grp.values, "count": cnt.values, "SOURCE": s
+        })
+        all_vals.append(agg)
+
+    if len(all_vals) == 0:
+        st.warning("Empty slice. Try widening the depth window or changing dataset(s).")
+    else:
+        agg_df = pd.concat(all_vals, ignore_index=True)
+        if clip_mode == "Percentile":
+            vmax = float(np.nanpercentile(agg_df["val"], pctl))
+            vmax = 1.0 if (not np.isfinite(vmax) or vmax <= 0) else vmax
+            vmin, vmax = 0.0, vmax
+        else:
+            vmin, vmax = 0.0, float(abs_max)
+
+        lon0, lon1 = float(agg_df["LONGITUDE"].min()), float(agg_df["LONGITUDE"].max())
+        lat0, lat1 = float(agg_df["LATITUDE"].min()),  float(agg_df["LATITUDE"].max())
+        center_init = {"lon": (lon0 + lon1) / 2.0, "lat": (lat0 + lat1) / 2.0}
+        span = max(lon1 - lon0, lat1 - lat0, 1e-6)
+        zoom_init = float(np.clip(3 + np.log2(360.0 / span), 1, 12))
+
+        figm = px.scatter_mapbox(
+            agg_df, lat="LATITUDE", lon="LONGITUDE", color="val",
+            size="count", size_max=28, opacity=0.85,
+            color_continuous_scale=pick_seq_scale(palette), range_color=[vmin, vmax],
+            height=720, hover_name="SOURCE",
+        )
+        figm.update_layout(
+            mapbox_style="open-street-map",
+            mapbox=dict(center=center_init, zoom=zoom_init),
+            margin=dict(l=0, r=0, t=40, b=10),
+            uirevision="xy-map-viewport",
+        )
+        if mode == "All (overlay)":
+            figm.update_layout(showlegend=False)
+        st.plotly_chart(figm, use_container_width=True,
+                        config={"scrollZoom": True, "doubleClick": "reset", "displaylogo": False})
+
+# --- Section ---
+with tab4:
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        sec_depth_m = st.number_input("Depth (m)", 
+                                      value=float(np.nanmedian(df["DEPTH"])), step=1.0, key="sec_depth_m")
+    with c2:
+        sec_half_m  = st.number_input("Half window (m)", min_value=0.0, value=5.0, step=1.0, key="sec_half_m")
+    with c3:
+        sec_grid_km = st.number_input("XY grid (km)", min_value=0.1, value=0.5, step=0.05, key="sec_grid_km")
+
+    c4, c5, c6 = st.columns(3)
+    with c4:
+        sec_agg = st.selectbox("Aggregation", ["mean", "median", "max", "absmax"], index=0, key="sec_agg")
+    with c5:
+        sec_min_cnt = st.number_input("Min samples/cell", min_value=1, value=3, step=1, key="sec_min_cnt")
+    with c6:
+        sec_topdown = st.checkbox("Top-down view", value=True, key="sec_topdown")
+
     # Points in depth window just to compute tight bounds
     df_slice_pts = df[(df["DEPTH"] >= sec_depth_m - sec_half_m) &
                       (df["DEPTH"] <= sec_depth_m + sec_half_m)].copy()
@@ -465,8 +628,6 @@ elif view_mode == "Section":
         opacity=0.85, showscale=True, name="Depth slice",
     ))
 
-
-
     # Camera
     d0 = float(out["meta"]["depth"])
     dz = max(20.0, 0.05 * (dep_max - dep_min))
@@ -482,71 +643,38 @@ elif view_mode == "Section":
     )
     st.plotly_chart(fig, use_container_width=True)
 
+# ---------- Footer Stats ----------
+present_sources = sorted(df["SOURCE"].unique().tolist())
+st.markdown(f"**Datasets present:** {', '.join(present_sources)}")
+
+def compute_stats(subdf, label):
+    stats = subdf["VALUE"].describe(percentiles=[0.5, 0.9, 0.99])
+    stats["range"] = stats["max"] - stats["min"]
+    return stats.rename({
+        "count": "Count",
+        "mean": "Mean",
+        "std": "Std Dev",
+        "min": "Min",
+        "50%": "Median (50%)",
+        "90%": "90%",
+        "99%": "99%",
+        "max": "Max",
+        "range": "Range"
+    }).to_frame(name=label)
+
+# per-source stats
+per_source_stats = []
+for s in chosen:
+    sub = df[df["SOURCE"] == s]
+    if not sub.empty:
+        per_source_stats.append(compute_stats(sub, s))
+
+if len(chosen) > 1:
+    # overall + per-source
+    overall_stats = compute_stats(df, "Overall")
+    stats_df = pd.concat([overall_stats] + per_source_stats, axis=1)
 else:
-    # Map view unchanged (grid_km min 0.1, default 1.0)
-    d0, d1 = map_depth_window
-    mid_lat = 0.5 * (lat_rng[0] + lat_rng[1])
-    lon_deg = (map_grid_km * 1000.0) / (111000.0 * max(np.cos(np.deg2rad(mid_lat)), 1e-6))
-    lat_deg = (map_grid_km * 1000.0) / 111000.0
-    all_vals = []
-    for s in chosen:
-        sub = df[(df["SOURCE"] == s) & (df["DEPTH"] >= d0) & (df["DEPTH"] <= d1)].copy()
-        if sub.empty: continue
-        gx = np.floor(sub["LONGITUDE"] / lon_deg) * lon_deg
-        gy = np.floor(sub["LATITUDE"]  / lat_deg) * lat_deg
-        sub["_gx"] = gx; sub["_gy"] = gy
-        if map_agg == "absmax":
-            grp = sub.groupby(["_gx", "_gy"])["VALUE"].agg(lambda a: a.iloc[np.argmax(np.abs(a))])
-        elif map_agg == "median":
-            grp = sub.groupby(["_gx", "_gy"])["VALUE"].median()
-        elif map_agg == "max":
-            grp = sub.groupby(["_gx", "_gy"])["VALUE"].max()
-        else:
-            grp = sub.groupby(["_gx", "_gy"])["VALUE"].mean()
-        cnt = sub.groupby(["_gx", "_gy"])["VALUE"].size()
-        agg = pd.DataFrame({
-            "LONGITUDE": grp.index.get_level_values(0),
-            "LATITUDE":  grp.index.get_level_values(1),
-            "val": grp.values, "count": cnt.values, "SOURCE": s
-        })
-        all_vals.append(agg)
+    # only one → just show that dataset
+    stats_df = pd.concat(per_source_stats, axis=1)
 
-    if len(all_vals) == 0:
-        st.warning("Empty slice. Try widening the depth window or changing dataset(s).")
-    else:
-        agg_df = pd.concat(all_vals, ignore_index=True)
-        if clip_mode == "Percentile":
-            vmax = float(np.nanpercentile(agg_df["val"], pctl))
-            vmax = 1.0 if (not np.isfinite(vmax) or vmax <= 0) else vmax
-            vmin, vmax = 0.0, vmax
-        else:
-            vmin, vmax = 0.0, float(abs_max)
-
-        lon0, lon1 = float(agg_df["LONGITUDE"].min()), float(agg_df["LONGITUDE"].max())
-        lat0, lat1 = float(agg_df["LATITUDE"].min()),  float(agg_df["LATITUDE"].max())
-        center_init = {"lon": (lon0 + lon1) / 2.0, "lat": (lat0 + lat1) / 2.0}
-        span = max(lon1 - lon0, lat1 - lat0, 1e-6)
-        zoom_init = float(np.clip(3 + np.log2(360.0 / span), 1, 12))
-
-        figm = px.scatter_mapbox(
-            agg_df, lat="LATITUDE", lon="LONGITUDE", color="val",
-            size="count", size_max=28, opacity=0.85,
-            color_continuous_scale=pick_seq_scale(palette), range_color=[vmin, vmax],
-            height=720, hover_name="SOURCE",
-        )
-        figm.update_layout(
-            mapbox_style="open-street-map",
-            mapbox=dict(center=center_init, zoom=zoom_init),
-            margin=dict(l=0, r=0, t=40, b=10),
-            uirevision="xy-map-viewport",
-        )
-        if mode == "All (overlay)":
-            figm.update_layout(showlegend=False)
-        st.plotly_chart(figm, use_container_width=True,
-                        config={"scrollZoom": True, "doubleClick": "reset", "displaylogo": False})
-
-# ---------- Footer ----------
-with st.expander("Quick stats", expanded=False):
-    st.write("Datasets present:", sorted(df["SOURCE"].unique().tolist()))
-    st.write("Value percentiles (overall after filters):",
-             pd.Series(df["VALUE"]).quantile([0.5, 0.9, 0.99]))
+st.dataframe(stats_df.T, use_container_width=True)

@@ -1,8 +1,13 @@
 # 04_Diff_Home.py — Analysis Hub (entry) + global grid
 
 from __future__ import annotations
+import io
+from pathlib import Path
+import pandas as pd
 import streamlit as st
-from _ui_common import inject_theme, load_grid_cfg, save_grid_cfg, DEFAULT_GRID
+from _ui_common import inject_theme, ensure_session_bootstrap, load_grid_cfg, save_grid_cfg, DEFAULT_GRID
+from cap_common.config import load_cfg
+from cap_task2.overlap import recompute_all, Params
 
 # ---------------- Page meta / theme ----------------
 st.set_page_config(layout="wide", page_title="Analysis Hub")
@@ -95,41 +100,91 @@ with st.container(border=True):
 
 st.markdown("</div>", unsafe_allow_html=True)  # end grid
 
-st.divider()
-
 # -----------------------------------------------------------------------------
-# Global grid (applies to all analysis pages)
+# Task2 — Recompute difference tables
 # -----------------------------------------------------------------------------
-st.subheader("Global grid (applies to all analysis pages)")
+st.subheader("Change global grid settings")
 
-cfg = load_grid_cfg()
+cfg = load_cfg()
+import math
 
-c1, c2, c3 = st.columns(3)
-with c1:
-    cx = st.number_input("Cell X (m)", min_value=0.1, value=float(cfg["cell_x_m"]), step=0.5)
-with c2:
-    cy = st.number_input("Cell Y (m)", min_value=0.1, value=float(cfg["cell_y_m"]), step=0.5)
-with c3:
-    cz = st.number_input("Cell Z (m)", min_value=0.1, value=float(cfg["cell_z_m"]), step=0.1)
+# Helper: convert degrees to approximate meters at Perth latitude (~ -32°)
+def deg_to_m_split(deg: float, lat_deg: float = -32.0) -> str:
+    lat_m = deg * 111_000
+    lon_m = deg * 111_000 * math.cos(math.radians(lat_deg))
+    return f"approx. {lon_m:.1f} m (lon), {lat_m:.1f} m (lat)"
 
-c4, c5 = st.columns(2)
-with c4:
-    agg = st.selectbox(
-        "Aggregator", ["mean", "median", "max"],
-        index=["mean", "median", "max"].index(str(cfg["agg"]))
-    )
-with c5:
-    mc = st.number_input("Min samples per voxel", min_value=1, value=int(cfg["min_count"]), step=1)
+# Safely fetch config values (dict or object attributes)
+def _cfg_fetch(root, candidates: list[str], default: float) -> float:
+    for path in candidates:
+        obj = root
+        ok = True
+        for part in path.split("."):
+            if isinstance(obj, dict):
+                obj = obj.get(part) if part in obj else None
+            else:
+                obj = getattr(obj, part, None)
+            if obj is None:
+                ok = False
+                break
+        if ok:
+            try:
+                return float(obj)
+            except Exception:
+                pass
+    return float(default)
 
-b1, b2 = st.columns(2)
-with b1:
-    if st.button("Apply grid settings", use_container_width=True):
-        save_grid_cfg(dict(
-            cell_x_m=float(cx), cell_y_m=float(cy), cell_z_m=float(cz),
-            agg=str(agg), min_count=int(mc)
-        ))
-        st.success("Grid settings saved. Aggregated pages will use the new grid.")
-with b2:
-    if st.button("Reset to defaults", use_container_width=True):
-        save_grid_cfg(DEFAULT_GRID.copy())
-        st.info("Grid settings reset to defaults (≈ 10×10×1 m, mean, min_count=3).")
+cur_xy = _cfg_fetch(cfg, ["grid_step_deg", "task2.grid_step_deg", "difference.grid_step_deg"], 1e-4)
+cur_z  = _cfg_fetch(cfg, ["z_step_m", "task2.z_step_m", "difference.z_step_m"], 1.0)
+
+# ---- Card: show current grid configuration ----
+st.markdown(
+    f"""
+    <div class='hub-card'>
+      <h3>Current grid configuration</h3>
+      <p style='margin:0; font-size:0.9rem;'>XY grid step = {cur_xy:.6f} degree ({deg_to_m_split(cur_xy)})</p>
+      <p style='margin:0; font-size:0.9rem;'>Z step = {cur_z:.1f} m</p>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+# ---- Update form ----
+st.markdown(
+    "<p style='margin-top:1.2rem; font-size:1rem; font-weight:500;'>"
+    "Update grid configuration for this run:"
+    "</p>",
+    unsafe_allow_html=True
+)
+col1, col2 = st.columns(2)
+grid_step = col1.number_input("XY grid step (degree)", value=cur_xy, step=1e-4, format="%.6f")
+z_step    = col2.number_input("Z step (m)", value=cur_z, step=0.1, format="%.1f")
+
+if st.button("Update difference tables", type="primary"):
+    with st.spinner("Updating tables, please wait..."):
+        try:
+            params = Params(grid_step_deg=float(grid_step), z_step_m=float(z_step))
+            out = recompute_all(cfg, params)
+
+            # success message styled as a hub-card
+            st.markdown(
+                f"""
+                <div class='hub-card' style='border-left:4px solid #16a34a; background:#f0fdf4;'>
+                  <h3 style='color:#166534;'>Tables successfully updated</h3>
+                  <p style='margin:0; font-size:0.9rem;'>Files written to <code>reports/task2/difference/</code></p>
+                  <p style='margin:0.5rem 0 0 0; font-size:0.9rem;'><b>Run used:</b><br>
+                  XY grid step = {params.grid_step_deg:.6f} degree ({deg_to_m_split(params.grid_step_deg)})<br>
+                  Z step = {params.z_step_m:.1f} m</p>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+            # show output file list
+            for kind, mp in out.items():
+                with st.expander(f"{kind.capitalize()} output files", expanded=False):
+                    for name, p in mp.items():
+                        st.caption(f"- {name}: `{p}`")
+
+        except Exception as e:
+            st.error("Failed to update tables")

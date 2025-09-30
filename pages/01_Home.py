@@ -8,6 +8,7 @@ from _ui_common import (
     inject_theme, render_top_right_logo, render_cta_row,
     load_grid_cfg, ensure_session_bootstrap
 )
+from cap_common.config import load_cfg
 
 st.set_page_config(layout="wide", page_title="Home • Modeling Dashboard")
 inject_theme()
@@ -64,22 +65,56 @@ st.divider()
 
 # ----------------------------- Current Status -------------------------------
 st.subheader("Current status")
+
+import math
+
+# Helper: convert degrees to approximate meters at a given latitude (default Perth ≈ -32°)
+def deg_to_m_split(deg: float, lat_deg: float = -32.0) -> str:
+    lat_m = deg * 111_000
+    lon_m = deg * 111_000 * math.cos(math.radians(lat_deg))
+    return f"approx. {lon_m:.1f} m (lon), {lat_m:.1f} m (lat)"
+
+# Safely fetch config values (dict or object attributes)
+def _cfg_fetch(root, candidates: list[str], default: float) -> float:
+    for path in candidates:
+        obj = root
+        ok = True
+        for part in path.split("."):
+            if isinstance(obj, dict):
+                obj = obj.get(part) if part in obj else None
+            else:
+                obj = getattr(obj, part, None)
+            if obj is None:
+                ok = False
+                break
+        if ok:
+            try:
+                return float(obj)
+            except Exception:
+                pass
+    return float(default)
+
+# fetch current config
+cfg = load_cfg()
+cur_xy = _cfg_fetch(cfg, ["grid_step_deg", "task2.grid_step_deg", "difference.grid_step_deg"], 1e-4)
+cur_z  = _cfg_fetch(cfg, ["z_step_m", "task2.z_step_m", "difference.z_step_m"], 1.0)
+
 c1, c2 = st.columns(2)
 
 with c1:
     st.markdown("**Data source**")
-    st.write(f"{element} dataset (default)" if ds == "default" else f"{element} dataset (uploaded)")
-    if "uploaded_file" in st.session_state:
-        st.caption(f"File: {st.session_state['uploaded_file']}")
+    st.write(f"{element} dataset")
+    st.caption("To use another dataset, please put your shapefile `.zip` inside the `data/` folder.")
 
 with c2:
     st.markdown("**Global grid**")
-    st.write(f"{cfg['cell_x_m']} × {cfg['cell_y_m']} × {cfg['cell_z_m']} m, {cfg['agg']}, min_count={cfg['min_count']}")
-
-st.caption(
-    "Use **Original** to start exploring the default data, or go to **Data Manager** to upload and validate your own files."
-)
-
+    st.markdown(
+        f"<p style='margin:0.2rem 0; font-size:0.95rem;'>"
+        f"XY grid step = {cur_xy:.6f} degree ({deg_to_m_split(cur_xy)})<br>"
+        f"Z step = {cur_z:.1f} m"
+        f"</p>",
+        unsafe_allow_html=True
+    )
 # ----------------------------- Dataset overview -----------------------------
 st.subheader("Dataset overview")
 

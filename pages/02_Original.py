@@ -51,6 +51,7 @@ st.markdown(
     .stTabs + div [data-testid="stVerticalBlock"] > div:first-child {
         border-top: 1px solid #11182710; margin-top: -1px;
     }
+    .stAppDeployButton { display: none !important; }
     </style>
     """,
     unsafe_allow_html=True,

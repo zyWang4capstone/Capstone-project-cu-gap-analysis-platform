@@ -13,6 +13,12 @@ from cap_common.config import load_cfg
 st.set_page_config(layout="wide", page_title="Home • Modeling Dashboard")
 inject_theme()
 ensure_session_bootstrap()
+st.markdown("""
+<style>
+.stAppDeployButton { display: none !important; }
+</style>
+""", unsafe_allow_html=True)
+
 
 # ----------------------------- Config ---------------------------------------
 cfg = load_grid_cfg()

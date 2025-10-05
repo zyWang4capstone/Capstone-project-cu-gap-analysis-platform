@@ -48,6 +48,7 @@ st.markdown(
 
       /* Tighten the global-grid section a bit */
       .grid-wrap .stNumberInput > div > div { width:100%; }
+      .stAppDeployButton { display: none !important; }
     </style>
     """,
     unsafe_allow_html=True,

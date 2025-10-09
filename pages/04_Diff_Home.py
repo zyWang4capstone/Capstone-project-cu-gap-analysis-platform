@@ -189,3 +189,202 @@ if st.button("Update difference tables", type="primary"):
 
         except Exception as e:
             st.error("Failed to update tables")
+
+# -----------------------------------------------------------------------------
+# Global Difference Summary (Aggregated-level only)
+# -----------------------------------------------------------------------------
+
+st.subheader("Difference Summary")
+
+# ----------------- Paths -----------------
+DIFF_DIR = Path("reports/task2/difference")
+
+diff_files = {
+    "drillhole_all": DIFF_DIR / "drillhole_points_all.csv",
+    "drillhole_overlap": DIFF_DIR / "drillhole_points_overlap.csv",
+    "drillhole_dlonly": DIFF_DIR / "drillhole_points_dlonly.csv",
+    "drillhole_origonly": DIFF_DIR / "drillhole_points_origonly.csv",
+    "surface_all": DIFF_DIR / "surface_points_all.csv",
+    "surface_overlap": DIFF_DIR / "surface_points_overlap.csv",
+    "surface_dlonly": DIFF_DIR / "surface_points_dlonly.csv",
+    "surface_origonly": DIFF_DIR / "surface_points_origonly.csv",
+}
+
+tabs = st.tabs([
+    "Coverage & Value Summary",
+    "Difference Metrics"
+])
+
+# -----------------------------------------------------------------------------
+# TAB 1: Coverage (with counts + value distributions)
+# -----------------------------------------------------------------------------
+with tabs[0]:
+    st.caption("Aggregated Coverage Summary (cell counts with percentages)")
+
+    # ---------- Coverage Summary ----------
+    def get_agg_coverage(prefix: str, label: str):
+        """Compute overlap and unique coverage stats with counts and percentages."""
+        try:
+            df_all = pd.read_csv(DIFF_DIR / f"{prefix}_points_all.csv")
+            df_overlap = pd.read_csv(DIFF_DIR / f"{prefix}_points_overlap.csv")
+            df_dlonly = pd.read_csv(DIFF_DIR / f"{prefix}_points_dlonly.csv")
+            df_origonly = pd.read_csv(DIFF_DIR / f"{prefix}_points_origonly.csv")
+
+            n_total = len(df_all)
+            n_overlap = len(df_overlap)
+            n_dlonly = len(df_dlonly)
+            n_origonly = len(df_origonly)
+
+            overlap_pct = n_overlap / n_total * 100 if n_total else 0
+            dlonly_pct = n_dlonly / n_total * 100 if n_total else 0
+            origonly_pct = n_origonly / n_total * 100 if n_total else 0
+
+            def fmt(n, pct):
+                return f"{n:,} ({pct:.2f}%)"
+
+            return {
+                "Dataset": label,
+                "Total Cells": f"{n_total:,}",
+                "Overlap": fmt(n_overlap, overlap_pct),
+                "DL-only": fmt(n_dlonly, dlonly_pct),
+                "Original-only": fmt(n_origonly, origonly_pct),
+            }
+        except Exception as e:
+            return {"Dataset": label, "Status": f"Error: {e}"}
+
+    coverage_df = pd.DataFrame([
+        get_agg_coverage("drillhole", "Drillhole"),
+        get_agg_coverage("surface", "Surface")
+    ])
+    st.dataframe(coverage_df, use_container_width=True, hide_index=True)
+
+    # ---------- Helper for value summary ----------
+    def get_value_summary(df: pd.DataFrame, label: str):
+        """Return descriptive statistics for value columns."""
+        val_cols = [c for c in df.columns if "value" in c.lower()]
+        if not val_cols:
+            return None
+        col = val_cols[0]
+        s = df[col].dropna()
+        return {
+            "Subset": label,
+            "Count": len(s),
+            "Mean": s.mean(),
+            "Std": s.std(),
+            "Q25": s.quantile(0.25),
+            "Median": s.median(),
+            "Q75": s.quantile(0.75),
+            "Q95": s.quantile(0.95),
+            "Q99": s.quantile(0.99),
+            "Min": s.min(),
+            "Max": s.max(),
+        }
+
+    # ---------- Domain-level summaries ----------
+    def show_value_summary(prefix: str, domain_label: str):
+        """Show value distributions for overlap, DL-only, and Original-only subsets."""
+
+        try:
+            df_overlap = pd.read_csv(DIFF_DIR / f"{prefix}_points_overlap.csv")
+            df_dlonly = pd.read_csv(DIFF_DIR / f"{prefix}_points_dlonly.csv")
+            df_origonly = pd.read_csv(DIFF_DIR / f"{prefix}_points_origonly.csv")
+
+            stats = [
+                get_value_summary(df_overlap, "Overlap"),
+                get_value_summary(df_dlonly, "DL-only"),
+                get_value_summary(df_origonly, "Original-only"),
+            ]
+            stats = [s for s in stats if s]
+            summary_df = pd.DataFrame(stats).round(3)
+            st.dataframe(summary_df, use_container_width=True, hide_index=True)
+        except Exception as e:
+            st.warning(f"Could not load {domain_label} datasets: {e}")
+
+    # Drillhole & Surface summaries
+    st.caption("Value Distributions by Subset")
+    show_value_summary("drillhole", "Drillhole")
+    show_value_summary("surface", "Surface")
+
+# -----------------------------------------------------------------------------
+# TAB 2: Aggregated Difference Metrics (DL – Original)
+# -----------------------------------------------------------------------------
+with tabs[1]:
+    st.caption(
+        "All metrics below are computed on overlapping grid cells where both DL and Original values exist."
+    )
+
+    def get_overlap_pct(prefix: str) -> float:
+        df_all = pd.read_csv(DIFF_DIR / f"{prefix}_points_all.csv")
+        df_overlap = pd.read_csv(DIFF_DIR / f"{prefix}_points_overlap.csv")
+        n_total, n_overlap = len(df_all), len(df_overlap)
+        return n_overlap / n_total * 100 if n_total else 0
+
+    def compute_detailed_diff(path: Path, label: str, overlap_pct: float, col_name: str = "diff"):
+        """Compute summary statistics for overlap region."""
+        if not path.exists():
+            return None
+
+        df = pd.read_csv(path)
+        diff_cols = [c for c in df.columns if c.lower() == col_name.lower()]
+        if not diff_cols:
+            return None
+
+        diff = df[diff_cols[0]].dropna()
+        n_total = len(diff)
+        n_higher = (diff > 0).sum()
+        n_lower = (diff < 0).sum()
+        pct_higher = n_higher / n_total * 100 if n_total else 0
+        pct_lower = n_lower / n_total * 100 if n_total else 0
+
+        overview = {
+            "Dataset": label,
+            "Overlap Cells": f"{n_total:,} ({overlap_pct:.2f}%)",
+            "DL Higher": f"{n_higher:,} ({pct_higher:.2f}%)",
+            "DL Lower": f"{n_lower:,} ({pct_lower:.2f}%)",
+        }
+
+        summary = {
+            "Dataset": label,
+            "Mean Diff": diff.mean(),
+            "Std Diff": diff.std(),
+            "MAE": diff.abs().mean(),
+            "RMSE": (diff ** 2).mean() ** 0.5,
+            "Q25": diff.quantile(0.25),
+            "Median": diff.median(),
+            "Q75": diff.quantile(0.75),
+            "Q95": diff.quantile(0.95),
+            "Q99": diff.quantile(0.99),
+            "Min": diff.min(),
+            "Max": diff.max(),
+        }
+
+        return overview, summary
+
+    # Run for both datasets
+    overlap_dh = get_overlap_pct("drillhole")
+    overlap_sf = get_overlap_pct("surface")
+
+    drillhole = compute_detailed_diff(diff_files["drillhole_overlap"], "Drillhole", overlap_dh)
+    surface = compute_detailed_diff(diff_files["surface_overlap"], "Surface", overlap_sf)
+
+    if drillhole and surface:
+        overview_df = pd.DataFrame([drillhole[0], surface[0]])
+        summary_df = pd.DataFrame([drillhole[1], surface[1]]).round(3)
+
+        st.caption("A. Directional Overview")
+        st.dataframe(overview_df, use_container_width=True, hide_index=True)
+
+        st.caption("B. Summary Statistics")
+        st.dataframe(summary_df, use_container_width=True, hide_index=True)
+
+        # Download option
+        csv_buf = io.StringIO()
+        summary_df.to_csv(csv_buf, index=False)
+        st.download_button(
+            label="Download Difference Metrics CSV",
+            data=csv_buf.getvalue(),
+            file_name="aggregated_diff_metrics.csv",
+            mime="text/csv",
+        )
+    else:
+        st.warning("Missing overlap files or 'diff' column.")

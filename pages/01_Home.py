@@ -63,7 +63,7 @@ with left:
         """,
         unsafe_allow_html=True,
     )
-    render_cta_row()
+    
 with right:
     render_top_right_logo()
 

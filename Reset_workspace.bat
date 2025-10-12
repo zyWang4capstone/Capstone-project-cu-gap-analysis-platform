@@ -76,7 +76,11 @@ call :del_glob "%BASE%\task1" "*.zip"
 call :del_glob "%BASE%\task2" "*.csv"
 call :del_glob "%BASE%\task2" "*.parquet"
 call :del_glob "%BASE%\task2" "*.zip"
+call :del_glob "%BASE%\task1\original" "*.csv"
+call :del_glob "%BASE%\task1\original" "*.parquet"
 goto :eof
+
+
 
 :wipe_dir
 set "D=%~1"

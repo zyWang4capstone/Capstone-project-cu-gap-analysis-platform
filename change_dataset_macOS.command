@@ -1,14 +1,6 @@
 #!/bin/zsh
 set -euo pipefail
 
-# change_dataset.command (v2)
-# - Uses existing env
-# - Lists datasets in ./data and ./data/_pool
-# - Moves all zips from ./data to ./data/_pool, then copies chosen one back to ./data (so only one zip remains)
-# - Prompts for column/min/max
-# - Runs pipeline
-# - Does NOT start Streamlit
-
 info()  { echo "\033[1;34m[INFO]\033[0m $*"; }
 ok()    { echo "\033[1;32m[OK]\033[0m $*"; }
 warn()  { echo "\033[1;33m[WARN]\033[0m $*"; }

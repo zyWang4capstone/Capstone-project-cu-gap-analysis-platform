@@ -1,15 +1,6 @@
 #!/bin/zsh
 set -euo pipefail
 
-# installer.command (v2)
-# - Repo is already unzipped; script lives in repo root
-# - Installs Miniforge if needed, creates/updates env from environment.yml
-# - Lists datasets in ./data (and ./data/_pool if present)
-# - Moves all zips into ./data/_pool, then copies the chosen one back to ./data (so only one zip is present)
-# - Prompts for --value-col and optional --value-min/--value-max
-# - Runs the pipeline
-# - Does NOT start Streamlit
-
 info()  { echo "\033[1;34m[INFO]\033[0m $*"; }
 ok()    { echo "\033[1;32m[OK]\033[0m $*"; }
 warn()  { echo "\033[1;33m[WARN]\033[0m $*"; }

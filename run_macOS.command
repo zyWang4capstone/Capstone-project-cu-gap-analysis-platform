@@ -1,6 +1,5 @@
 #!/bin/zsh
 set -euo pipefail
-# run.command — activates env and starts Streamlit
 
 info()  { echo "\033[1;34m[INFO]\033[0m $*"; }
 err()   { echo "\033[1;31m[ERR]\033[0m $*"; }
